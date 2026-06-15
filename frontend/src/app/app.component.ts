@@ -20,6 +20,8 @@ import {CommandPaletteComponent} from './features/command-palette/command-palett
 import {CommandPaletteService} from './features/command-palette/command-palette.service';
 import {LibraryImportProgressService} from './shared/service/library-import-progress.service';
 import {AuthorService} from './features/author-browser/service/author.service';
+import {MessageService} from 'primeng/api';
+import {BookConversionCompletionNotification} from './features/book/service/book-conversion.service';
 
 @Component({
   selector: 'app-root',
@@ -49,6 +51,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private commandPaletteService = inject(CommandPaletteService);
   private readonly libraryImportProgressService = inject(LibraryImportProgressService);
   private readonly translocoService = inject(TranslocoService);
+  private readonly messageService = inject(MessageService);
   private destroyRef = inject(DestroyRef);
   private readonly syncAuthInitializationEffect = effect(() => {
     const ready = this.authInit.initialized();
@@ -148,6 +151,22 @@ export class AppComponent implements OnInit, OnDestroy {
       this.rxStompService.watch('/user/queue/log').subscribe(msg => {
         const logNotification = parseLogNotification(msg.body);
         this.notificationEventService.handleNewNotification(logNotification);
+      })
+    );
+    this.subscriptions.push(
+      this.rxStompService.watch('/user/queue/book-conversion-complete').subscribe(msg => {
+        const notification = JSON.parse(msg.body) as BookConversionCompletionNotification;
+        this.messageService.add({
+          severity: notification.failedCount > 0 ? 'warn' : 'success',
+          summary: this.translocoService.translate('book.converter.toast.completedSummary'),
+          detail: this.translocoService.translate('book.converter.toast.completedDetail', {
+            totalCount: notification.totalCount,
+            format: notification.targetFormat,
+            convertedCount: notification.convertedCount,
+            skippedCount: notification.skippedCount,
+            failedCount: notification.failedCount,
+          }),
+        });
       })
     );
     this.subscriptions.push(

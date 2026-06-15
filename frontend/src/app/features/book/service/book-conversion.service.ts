@@ -19,6 +19,14 @@ export interface BookConversionResponse {
   targetFormat: BookType;
 }
 
+export interface BookConversionCompletionNotification {
+  totalCount: number;
+  targetFormat: BookType;
+  convertedCount: number;
+  skippedCount: number;
+  failedCount: number;
+}
+
 @Injectable({providedIn: 'root'})
 export class BookConversionService {
   private readonly url = `${API_CONFIG.BASE_URL}/api/v1/books`;

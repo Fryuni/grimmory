@@ -1,6 +1,6 @@
 import { signal } from "@angular/core";
 import { ComponentFixture, TestBed } from "@angular/core/testing";
-import { TranslocoTestingModule } from "@jsverse/transloco";
+import { TranslocoService, TranslocoTestingModule } from "@jsverse/transloco";
 import { Subject } from "rxjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,6 +51,7 @@ describe("AppComponent", () => {
   let libraryHealthService: { initWebsocket: ReturnType<typeof vi.fn>, fetchHealth: ReturnType<typeof vi.fn> };
   let authService: { forceLogout: ReturnType<typeof vi.fn>, isAuthenticated: ReturnType<typeof signal> };
   let libraryImportProgressService: { recordBookAdded: ReturnType<typeof vi.fn> };
+  let messageService: { add: ReturnType<typeof vi.fn> };
   let commandPaletteService: {
     toggle: ReturnType<typeof vi.fn>;
     open: ReturnType<typeof vi.fn>;
@@ -92,6 +93,7 @@ describe("AppComponent", () => {
     libraryHealthService = { initWebsocket: vi.fn(), fetchHealth: vi.fn() };
     authService = { forceLogout: vi.fn(), isAuthenticated: signal(auth.authenticated) };
     libraryImportProgressService = { recordBookAdded: vi.fn() };
+    messageService = { add: vi.fn() };
     commandPaletteService = {
       toggle: vi.fn(),
       open: vi.fn(),
@@ -126,8 +128,11 @@ describe("AppComponent", () => {
         { provide: LibraryImportProgressService, useValue: libraryImportProgressService },
         { provide: CommandPaletteService, useValue: commandPaletteService },
         ConfirmationService,
-        MessageService],
+        { provide: MessageService, useValue: messageService },
+      ],
     });
+    TestBed.overrideComponent(AppComponent, { set: { template: "" } });
+
 
     fixture = TestBed.createComponent(AppComponent);
     component = fixture.componentInstance;
@@ -228,6 +233,56 @@ describe("AppComponent", () => {
     });
     expect(taskService.handleTaskProgress).toHaveBeenCalledWith({
       taskId: "task-2",
+    });
+  });
+
+  it("shows completion toasts from websocket conversion notifications", () => {
+    configureComponent();
+    const translateSpy = vi.spyOn(TestBed.inject(TranslocoService), "translate")
+      .mockImplementation(key => key);
+
+    topics
+      .get("/user/queue/book-conversion-complete")
+      ?.next({
+        body: JSON.stringify({
+          totalCount: 2,
+          targetFormat: "MOBI",
+          convertedCount: 1,
+          skippedCount: 0,
+          failedCount: 1,
+        }),
+      });
+
+    expect(translateSpy).toHaveBeenCalledWith("book.converter.toast.completedSummary");
+    expect(translateSpy).toHaveBeenCalledWith("book.converter.toast.completedDetail", {
+      totalCount: 2,
+      format: "MOBI",
+      convertedCount: 1,
+      skippedCount: 0,
+      failedCount: 1,
+    });
+    expect(messageService.add).toHaveBeenCalledWith({
+      severity: "warn",
+      summary: "book.converter.toast.completedSummary",
+      detail: "book.converter.toast.completedDetail",
+    });
+
+    topics
+      .get("/user/queue/book-conversion-complete")
+      ?.next({
+        body: JSON.stringify({
+          totalCount: 1,
+          targetFormat: "PDF",
+          convertedCount: 1,
+          skippedCount: 0,
+          failedCount: 0,
+        }),
+      });
+
+    expect(messageService.add).toHaveBeenLastCalledWith({
+      severity: "success",
+      summary: "book.converter.toast.completedSummary",
+      detail: "book.converter.toast.completedDetail",
     });
   });
 

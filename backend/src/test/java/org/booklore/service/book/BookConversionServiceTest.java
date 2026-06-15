@@ -4,6 +4,7 @@ import org.booklore.config.security.service.AuthenticationService;
 import org.booklore.exception.APIException;
 import org.booklore.mapper.BookMapper;
 import org.booklore.model.dto.Book;
+import org.booklore.model.dto.BookConversionCompletionNotification;
 import org.booklore.model.dto.BookLoreUser;
 import org.booklore.model.dto.request.BookConversionRequest;
 import org.booklore.model.entity.BookEntity;
@@ -158,6 +159,8 @@ class BookConversionServiceTest {
         verify(monitoringRegistrationService).waitForEventsDrainedByPaths(Set.of(tempDir), 300L);
         verify(monitoringRegistrationService).registerLibraryPaths(1L, tempDir);
         verify(notificationService).sendMessageToUser("admin", Topic.BOOK_UPDATE, dto);
+        verify(notificationService).sendMessageToUser("admin", Topic.BOOK_CONVERSION_COMPLETE,
+                new BookConversionCompletionNotification(1, BookFileType.MOBI, 1, 0, 0));
     }
 
     @Test

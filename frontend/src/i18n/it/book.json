@@ -918,7 +918,9 @@
     "converting": "Starting...",
     "toast": {
       "startedSummary": "Conversion Started",
-      "startedDetail": "Converting {{ count }} book(s) to {{ format }}.",
+      "startedDetail": "Converting {{ count }} book(s) to {{ format }}. You will receive a notification when the conversion is complete.",
+      "completedSummary": "Conversion Complete",
+      "completedDetail": "Conversion finished for {{ totalCount }} book(s) to {{ format }}: {{ convertedCount }} converted, {{ skippedCount }} skipped, {{ failedCount }} failed.",
       "failedSummary": "Conversion Failed",
       "failedDetail": "Could not start conversion."
     }

@@ -11,6 +11,7 @@ import {Library} from '../../model/library.model';
 import {BookConversionCapability, BookConversionResponse, BookConversionService} from '../../service/book-conversion.service';
 import {LibraryService} from '../../service/library.service';
 import {BookConverterComponent} from './book-converter.component';
+import enBookTranslations from '../../../../../i18n/en/book.json';
 
 
 describe('BookConverterComponent', () => {
@@ -121,6 +122,10 @@ describe('BookConverterComponent', () => {
       detail: 'book.converter.toast.startedDetail:{"count":1,"format":"MOBI"}',
     });
     expect(dialogRef.close).toHaveBeenCalledWith(true);
+  });
+
+  it('uses start toast copy that promises completion notification', () => {
+    expect(enBookTranslations.converter.toast.startedDetail).toBe('Converting {{ count }} book(s) to {{ format }}. You will receive a notification when the conversion is complete.');
   });
 
   function instantiateComponent(books: Book[]): BookConverterComponent {

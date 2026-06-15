@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.booklore.config.security.service.AuthenticationService;
 import org.booklore.exception.ApiError;
 import org.booklore.mapper.BookMapper;
+import org.booklore.model.dto.BookConversionCompletionNotification;
 import org.booklore.model.dto.BookLoreUser;
 import org.booklore.model.dto.request.BookConversionRequest;
 import org.booklore.model.dto.response.BookConversionCapabilityResponse;
@@ -149,6 +150,13 @@ public class BookConversionService {
                 + counters.converted + " converted, "
                 + counters.skipped + " skipped, "
                 + counters.failed + " failed"));
+        sendNotification(username, Topic.BOOK_CONVERSION_COMPLETE,
+                new BookConversionCompletionNotification(
+                        bookIds.size(),
+                        targetFormat,
+                        counters.converted,
+                        counters.skipped,
+                        counters.failed));
     }
 
     private ConversionStatus processBook(Long bookId, BookFileType targetFormat, String username) {
