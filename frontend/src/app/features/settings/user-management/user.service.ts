@@ -9,6 +9,7 @@ import { DashboardConfig } from '../../dashboard/models/dashboard-config.model';
 import { injectQuery, queryOptions, QueryClient } from '@tanstack/angular-query-experimental';
 import { CURRENT_USER_QUERY_KEY } from './user-query-keys';
 import { AppTheme, CustomPrimary } from '../../../shared/model/app-state.model';
+import {DEFAULT_UI_FONT, normalizeUiFont, type UiFontPreference} from '../../../shared/model/ui-font.model';
 
 export interface EntityViewPreferences {
   global: EntityViewPreference;
@@ -324,6 +325,7 @@ export interface User {
   theme: AppTheme;
   themeAccent: CustomPrimary | null;
   themeSyncEnabled: boolean;
+  uiFont?: UiFontPreference;
   assignedLibraries: Library[];
   permissions: {
     admin: boolean;
@@ -383,6 +385,7 @@ export interface UserProfileUpdateRequest {
   theme?: AppTheme;
   themeAccent?: CustomPrimary | null;
   themeSyncEnabled?: boolean;
+  uiFont?: UiFontPreference;
 }
 
 @Injectable({
@@ -536,6 +539,7 @@ export class UserService {
       theme,
       themeAccent: theme === 'custom' ? user.themeAccent ?? 'orange' : null,
       themeSyncEnabled: user.themeSyncEnabled ?? true,
+      uiFont: normalizeUiFont(user.uiFont ?? DEFAULT_UI_FONT),
       permissions: {
         ...permissions,
         canBulkResetGrimmoryReadProgress: permissions.canBulkResetGrimmoryReadProgress ?? permissions.canBulkResetBookloreReadProgress,
