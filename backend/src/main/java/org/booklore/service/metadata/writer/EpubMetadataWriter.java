@@ -8,6 +8,7 @@ import org.booklore.model.dto.settings.MetadataPersistenceSettings;
 import org.booklore.model.entity.BookEntity;
 import org.booklore.model.entity.BookMetadataEntity;
 import org.booklore.model.enums.BookFileType;
+import org.booklore.service.ArchiveService;
 import org.booklore.service.appsettings.AppSettingService;
 import org.booklore.util.SecureXmlUtils;
 import org.springframework.stereotype.Component;
@@ -32,7 +33,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -46,8 +46,6 @@ import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import org.grimmory.epub4j.archive.EpubContainer;
-import org.grimmory.epub4j.archive.EpubContainers;
 import java.util.function.Predicate;
 import java.io.UncheckedIOException;
 
@@ -59,6 +57,7 @@ public class EpubMetadataWriter implements MetadataWriter {
     private static final String OPF_NS = "http://www.idpf.org/2007/opf";
     private static final Pattern CALIBRE_PREFIX_PATTERN = Pattern.compile("calibre:\\s*https?://[^\\s]+");
     private final AppSettingService appSettingService;
+    private final ArchiveService archiveService;
 
     @Override
     public void saveMetadataToFile(File epubFile, BookMetadataEntity metadata, String thumbnailUrl, MetadataClearFlags clear) {
@@ -224,6 +223,7 @@ public class EpubMetadataWriter implements MetadataWriter {
                 addBookloreMetadata(metadataElement, opfDoc, metadata);
                 cleanupCalibreArtifacts(metadataElement, opfDoc);
                 organizeMetadataElements(metadataElement);
+                removeInvalidMetaRefines(metadataElement, opfDoc);
                 removeEmptyTextNodes(opfDoc);
                 Transformer transformer = TransformerFactory.newInstance().newTransformer();
                 transformer.setOutputProperty(OutputKeys.INDENT, "yes");
@@ -527,17 +527,19 @@ public class EpubMetadataWriter implements MetadataWriter {
     }
 
     private void extractZipToDirectory(File zipSource, Path targetDir) throws IOException {
-        try (EpubContainer container = EpubContainers.open(zipSource.toPath())) {
-            for (String name : container.listAllFiles()) {
-                Path entryPath = targetDir.resolve(name).normalize();
-                if (!entryPath.startsWith(targetDir)) {
-                    throw new IOException("ZIP entry outside target directory: " + name);
-                }
-                Files.createDirectories(entryPath.getParent());
-                try (OutputStream out = Files.newOutputStream(entryPath)) {
-                    container.streamTo(name, out);
-                }
+        Path zipPath = zipSource.toPath();
+
+        if (!Files.isRegularFile(zipPath) || !Files.isReadable(zipPath)) {
+            throw new IOException("Target is not a readable regular file.");
+        }
+
+        for (var name : archiveService.getEntryNames(zipPath)) {
+            Path entryPath = targetDir.resolve(name).normalize();
+            if (!entryPath.startsWith(targetDir)) {
+                throw new IOException("ZIP entry outside target directory: " + name);
             }
+            Files.createDirectories(entryPath.getParent());
+            archiveService.extractEntryToPath(zipPath, name, entryPath);
         }
     }
 
@@ -591,6 +593,41 @@ public class EpubMetadataWriter implements MetadataWriter {
             Element meta = (Element) metas.item(i);
             if (name.equals(meta.getAttribute("name"))) {
                 metadataElement.removeChild(meta);
+            }
+        }
+    }
+
+    private void removeInvalidMetaRefines(Element metadataElement, Document doc) {
+        // In an ideal world we could set the `validating` flag or
+        // otherwise set the `isId` attribute tag correctly for `id`
+        // but because we cannot, we can't use `getElementById()` on
+        // the document.  With that in mind, we area going to read all
+        // tags, check if they have an `id`, and store that in a `Set`
+        Set<String> ids = new HashSet<>();
+
+        NodeList nodes = doc.getElementsByTagName("*");
+        for (int i = 0; i < nodes.getLength(); i++) {
+            var node = nodes.item(i);
+
+            if (node instanceof Element element) {
+                var idAttribute = element.getAttribute("id");
+                if (!idAttribute.isBlank()) {
+                    ids.add(idAttribute);
+                }
+            }
+        }
+
+        NodeList metas = metadataElement.getElementsByTagNameNS("*", "meta");
+        for (int i = metas.getLength() - 1; i >= 0; i--) {
+            Element meta = (Element) metas.item(i);
+            String refines = meta.getAttribute("refines");
+
+            if (refines.startsWith("#")) {
+                String refinesId = refines.substring(1);
+
+                if (!ids.contains(refinesId)) {
+                    metadataElement.removeChild(meta);
+                }
             }
         }
     }

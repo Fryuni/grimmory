@@ -262,7 +262,7 @@ class BookConversionServiceTest {
                 .id(id)
                 .library(library)
                 .libraryPath(libraryPath)
-                .bookFiles(new ArrayList<>())
+                .bookFiles(new LinkedHashSet<>())
                 .build();
         BookFileEntity file = BookFileEntity.builder()
                 .id(1L)

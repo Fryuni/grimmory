@@ -7,6 +7,7 @@ import {
   input,
   model,
   numberAttribute,
+  output,
   type ElementRef,
   viewChild,
 } from '@angular/core';
@@ -14,17 +15,19 @@ import { transformedValue, type FormValueControl, type ParseResult } from '@angu
 import { LucideChevronDown, LucideChevronUp, LucideMinus, LucidePlus } from '@lucide/angular';
 
 import { cn } from '../cn';
+import { AppControlTransitionDirective } from '../control.styles';
 import { APP_FIELD } from '../field/app-field.context';
 import { appInputVariants, type AppInputSize } from '../input/app-input.variants';
 
 @Component({
   selector: 'app-number-input',
   standalone: true,
-  imports: [LucideChevronDown, LucideChevronUp, LucideMinus, LucidePlus],
+  imports: [AppControlTransitionDirective, LucideChevronDown, LucideChevronUp, LucideMinus, LucidePlus],
   host: { class: 'relative block w-full' },
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <input
+      appControlTransition
       #input
       [class]="inputClass()"
       type="number"
@@ -44,7 +47,7 @@ import { appInputVariants, type AppInputSize } from '../input/app-input.variants
       [readonly]="readonly()"
       [required]="required()"
       (input)="onInput(input)"
-      (blur)="touched.set(true)" />
+      (blur)="touch.emit()" />
 
     @if (unit() || !readonly()) {
       <div class="pointer-events-none absolute inset-y-0 right-0 flex items-stretch">
@@ -86,7 +89,8 @@ export class AppNumberInputComponent implements FormValueControl<number | null> 
   readonly required = input(false, { transform: booleanAttribute });
   readonly invalid = input(false, { transform: booleanAttribute });
   readonly pending = input(false, { transform: booleanAttribute });
-  readonly touched = model(false);
+  readonly touched = input(false, { transform: booleanAttribute });
+  readonly touch = output<void>();
   readonly name = input('');
 
   readonly size = input<AppInputSize>('md');

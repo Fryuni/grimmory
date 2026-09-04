@@ -1,9 +1,9 @@
 package org.booklore.config.security.oidc;
 
-import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.booklore.exception.ApiError;
 import org.booklore.model.dto.settings.OidcProviderDetails;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -18,11 +18,19 @@ import org.springframework.web.client.RestClientException;
 
 @Slf4j
 @Service
-@AllArgsConstructor
 public class OidcTokenClient {
 
     private final OidcDiscoveryService discoveryService;
     private final RestTemplate oidcRestTemplate;
+
+    public OidcTokenClient(
+            OidcDiscoveryService discoveryService,
+            @Qualifier("oidc")
+            RestTemplate oidcRestTemplate
+    ) {
+        this.discoveryService = discoveryService;
+        this.oidcRestTemplate = oidcRestTemplate;
+    }
 
     public record TokenResponse(
             String accessToken,

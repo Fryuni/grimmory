@@ -1,15 +1,15 @@
 import {Component, DestroyRef, effect, inject} from '@angular/core';
 import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {FormsModule, ReactiveFormsModule} from '@angular/forms';
-import {TableModule} from 'primeng/table';
-import {InputText} from 'primeng/inputtext';
-import {Button} from 'primeng/button';
+import {TableModule} from '@openng/optimus-ui/table';
+import {InputText} from '@openng/optimus-ui/inputtext';
+import {Button} from '@openng/optimus-ui/button';
 import {AppSettingsService} from '../../../../shared/service/app-settings.service';
-import {MessageService} from 'primeng/api';
+import {MessageService} from '@openng/optimus-ui/api';
 import {AppSettingKey} from '../../../../shared/model/app-settings.model';
-import {Select} from 'primeng/select';
+import {Select} from '@openng/optimus-ui/select';
 import {ExternalDocLinkComponent} from '../../../../shared/components/external-doc-link/external-doc-link.component';
-import { ToggleSwitch } from 'primeng/toggleswitch';
+import { ToggleSwitch } from '@openng/optimus-ui/toggleswitch';
 import {TranslocoDirective, TranslocoService} from '@jsverse/transloco';
 
 @Component({
@@ -96,6 +96,7 @@ export class MetadataProviderSettingsComponent {
   doubanEnabled: boolean = false;
   lubimyCzytacEnabled: boolean = false;
   ranobedbEnabled: boolean = false;
+  ranobedbPreferRomaji: boolean = false;
   googleApiKey: string = '';
 
   private appSettingsService = inject(AppSettingsService);
@@ -116,9 +117,9 @@ export class MetadataProviderSettingsComponent {
     this.amazonCookie = metadataProviderSettings?.amazon?.cookie ?? "";
     this.selectedAmazonDomain = metadataProviderSettings?.amazon?.domain ?? 'com';
     this.goodreadsEnabled = metadataProviderSettings?.goodReads?.enabled ?? false;
-    this.googleEnabled = metadataProviderSettings?.google?.enabled ?? false;
     this.selectedGoogleLanguage = metadataProviderSettings?.google?.language ?? '';
     this.googleApiKey = metadataProviderSettings?.google?.apiKey ?? '';
+    this.googleEnabled = (metadataProviderSettings?.google?.enabled ?? false) && this.googleApiKeyConfigured;
     this.hardcoverToken = metadataProviderSettings?.hardcover?.apiKey ?? '';
     this.hardcoverEnabled = metadataProviderSettings?.hardcover?.enabled ?? false;
     this.comicvineEnabled = metadataProviderSettings?.comicvine?.enabled ?? false;
@@ -126,6 +127,7 @@ export class MetadataProviderSettingsComponent {
     this.doubanEnabled = metadataProviderSettings?.douban?.enabled ?? false;
     this.lubimyCzytacEnabled = metadataProviderSettings?.lubimyczytac?.enabled ?? false;
     this.ranobedbEnabled = metadataProviderSettings?.ranobedb?.enabled ?? false;
+    this.ranobedbPreferRomaji = metadataProviderSettings?.ranobedb?.preferRomaji ?? false;
     this.audibleEnabled = metadataProviderSettings?.audible?.enabled ?? false;
     this.selectedAudibleDomain = metadataProviderSettings?.audible?.domain ?? 'com';
   }
@@ -139,6 +141,10 @@ export class MetadataProviderSettingsComponent {
 
   onComicTokenChange(newToken: string): void {
     this.comicvineToken = newToken;
+  }
+
+  get googleApiKeyConfigured(): boolean {
+    return this.googleApiKey.trim().length > 0;
   }
 
   saveSettings(): void {
@@ -157,7 +163,7 @@ export class MetadataProviderSettingsComponent {
           },
           goodReads: {enabled: this.goodreadsEnabled},
           google: {
-            enabled: this.googleEnabled,
+            enabled: this.googleEnabled && this.googleApiKeyConfigured,
             language: this.selectedGoogleLanguage,
             apiKey: this.googleApiKey.trim()
           },
@@ -167,7 +173,10 @@ export class MetadataProviderSettingsComponent {
           },
           douban: {enabled: this.doubanEnabled},
           lubimyczytac: {enabled: this.lubimyCzytacEnabled},
-          ranobedb: {enabled: this.ranobedbEnabled},
+          ranobedb: {
+            enabled: this.ranobedbEnabled,
+            preferRomaji: this.ranobedbPreferRomaji
+          },
           audible: {
             enabled: this.audibleEnabled,
             domain: this.selectedAudibleDomain

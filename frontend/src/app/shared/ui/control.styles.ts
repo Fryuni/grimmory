@@ -1,3 +1,30 @@
+import { afterNextRender, DestroyRef, Directive, inject, signal } from '@angular/core';
+
+@Directive({
+  selector: '[appControlTransition]',
+  host: {
+    '[class.control-transition-pending]': '!ready()',
+  },
+})
+export class AppControlTransitionDirective {
+  protected readonly ready = signal(false);
+
+  constructor() {
+    const destroyRef = inject(DestroyRef);
+    let animationFrameId = 0;
+    destroyRef.onDestroy(() => cancelAnimationFrame(animationFrameId));
+
+    afterNextRender(() => {
+      animationFrameId = requestAnimationFrame(() => {
+        if (destroyRef.destroyed) return;
+        animationFrameId = requestAnimationFrame(() => {
+          if (!destroyRef.destroyed) this.ready.set(true);
+        });
+      });
+    });
+  }
+}
+
 export const neutralControlBorderClass =
   'border-[color-mix(in_srgb,var(--color-text)_4%,var(--color-border))] dark:border-border';
 export const neutralSurfaceHoverClass =

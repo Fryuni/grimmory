@@ -3,8 +3,8 @@ import {RxStompService} from './shared/websocket/rx-stomp.service';
 import {BookService} from './features/book/service/book.service';
 import {NotificationEventService} from './shared/websocket/notification-event.service';
 import {parseLogNotification} from './shared/websocket/model/log-notification.model';
-import {ConfirmDialog} from 'primeng/confirmdialog';
-import {Toast} from 'primeng/toast';
+import {ConfirmDialog} from '@openng/optimus-ui/confirmdialog';
+import {Toast} from '@openng/optimus-ui/toast';
 import {RouterOutlet} from '@angular/router';
 import {TranslocoDirective, TranslocoPipe, TranslocoService} from '@jsverse/transloco';
 import {AuthInitializationService} from './core/security/auth-initialization-service';
@@ -20,7 +20,7 @@ import {CommandPaletteComponent} from './features/command-palette/command-palett
 import {CommandPaletteService} from './features/command-palette/command-palette.service';
 import {LibraryImportProgressService} from './shared/service/library-import-progress.service';
 import {AuthorService} from './features/author-browser/service/author.service';
-import {MessageService} from 'primeng/api';
+import {MessageService} from '@openng/optimus-ui/api';
 import {BookConversionCompletionNotification} from './features/book/service/book-conversion.service';
 
 @Component({

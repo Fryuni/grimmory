@@ -1,7 +1,7 @@
 import {TestBed} from '@angular/core/testing';
 import {TranslocoService} from '@jsverse/transloco';
-import {MessageService} from 'primeng/api';
-import {DynamicDialogConfig, DynamicDialogRef} from 'primeng/dynamicdialog';
+import {MessageService} from '@openng/optimus-ui/api';
+import {DynamicDialogConfig, DynamicDialogRef} from '@openng/optimus-ui/dynamicdialog';
 import {of} from 'rxjs';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {signal} from '@angular/core';
@@ -11,7 +11,7 @@ import {Library} from '../../model/library.model';
 import {BookConversionCapability, BookConversionResponse, BookConversionService} from '../../service/book-conversion.service';
 import {LibraryService} from '../../service/library.service';
 import {BookConverterComponent} from './book-converter.component';
-import enBookTranslations from '../../../../../i18n/en/book.json';
+import en from '../../../../../i18n/en.json';
 
 
 describe('BookConverterComponent', () => {
@@ -125,7 +125,7 @@ describe('BookConverterComponent', () => {
   });
 
   it('uses start toast copy that promises completion notification', () => {
-    expect(enBookTranslations.converter.toast.startedDetail).toBe('Converting {{ count }} book(s) to {{ format }}. You will receive a notification when the conversion is complete.');
+    expect(en.book.converter.toast.startedDetail).toBe('Converting {{ count }} book(s) to {{ format }}. You will receive a notification when the conversion is complete.');
   });
 
   function instantiateComponent(books: Book[]): BookConverterComponent {

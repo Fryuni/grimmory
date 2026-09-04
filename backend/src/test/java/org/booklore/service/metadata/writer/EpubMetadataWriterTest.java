@@ -8,12 +8,17 @@ import org.booklore.model.entity.BookEntity;
 import org.booklore.model.entity.BookFileEntity;
 import org.booklore.model.entity.BookMetadataEntity;
 import org.booklore.model.entity.LibraryPathEntity;
+import org.booklore.service.ArchiveService;
 import org.booklore.service.appsettings.AppSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mock;
+import org.mockito.Spy;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 import org.w3c.dom.Document;
@@ -26,9 +31,9 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -40,12 +45,17 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import java.net.URLDecoder;
 
+@ExtendWith(MockitoExtension.class)
 class EpubMetadataWriterTest {
+    @Mock
+    private AppSettingService appSettingService;
+
+    @Spy
+    private ArchiveService archiveService = new ArchiveService();
 
     private EpubMetadataWriter writer;
     private BookMetadataEntity metadata;
     private BookEntity bookEntity;
-    private AppSettingService appSettingService;
 
     @TempDir
     Path tempDir;
@@ -67,7 +77,7 @@ class EpubMetadataWriterTest {
         when(appSettings.getMetadataPersistenceSettings()).thenReturn(metadataPersistenceSettings);
         when(appSettingService.getAppSettings()).thenReturn(appSettings);
 
-        writer = new EpubMetadataWriter(appSettingService);
+        writer = new EpubMetadataWriter(appSettingService, archiveService);
         metadata = new BookMetadataEntity();
         metadata.setTitle("Test Book");
         AuthorEntity author = new AuthorEntity();
@@ -80,7 +90,7 @@ class EpubMetadataWriterTest {
         bookEntity.setLibraryPath(libraryPath);
         BookFileEntity primaryFile = new BookFileEntity();
         primaryFile.setBook(bookEntity);
-        bookEntity.setBookFiles(Collections.singletonList(primaryFile));
+        bookEntity.setBookFiles(Set.of(primaryFile));
         bookEntity.getPrimaryBookFile().setFileSubPath("");
         bookEntity.getPrimaryBookFile().setFileName("test.epub");
     }
@@ -116,6 +126,28 @@ class EpubMetadataWriterTest {
                     assertTrue(fileString.contains("id=\"creator02\""));
                 }
             }
+        }
+
+        @Test
+        @DisplayName("Should remove extraneous refines in EPUB3")
+        void writeMetadata_removesMissingRefines() throws Exception {
+            String opfContent = """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                        <other id="example">Example</other>
+
+                        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                            <meta refines="#example" property="identifier-type">wizard</meta>
+                            <meta refines="#example2" property="source-of">magic</meta>
+                        </metadata>
+                    </package>""";
+
+            File epubFile = createEpubWithOpf(opfContent, "test-epub3-role-" + System.nanoTime() + ".epub");
+            writer.saveMetadataToFile(epubFile, metadata, null, new MetadataClearFlags());
+
+            String content = readOpfContent(epubFile);
+            assertThat(content).doesNotContain("refines=\"#example2\"");
+            assertThat(content).contains("refines=\"#example\"");
         }
     }
 
@@ -460,6 +492,46 @@ class EpubMetadataWriterTest {
             assertThat(content).contains("A Great Subtitle");
             assertThat(content).contains("property=\"title-type\"");
             assertThat(content).contains(">subtitle<");
+        }
+
+        @Test
+        @DisplayName("Should remove refinement when subtitle is removed")
+        void epub3_shouldRemoveRefinementWhenRemovingSubtitle() throws Exception {
+            String opfContent = """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                            <dc:title id="#subtitle-12b45ebf">Subtitle</dc:title>
+                            <opf:meta xmlns:opf="http://www.idpf.org/2007/opf" property="title-type" refines="#subtitle-12b45ebf">subtitle</opf:meta>
+                        </metadata>
+                    </package>""";
+
+            metadata.setSubtitle(null);
+
+            File epubFile = createEpubWithOpf(opfContent, "test-epub3-subtitle-" + System.nanoTime() + ".epub");
+            writer.saveMetadataToFile(epubFile, metadata, null, new MetadataClearFlags());
+
+            String content = readOpfContent(epubFile);
+            assertThat(content).doesNotContain(">subtitle</opf:meta>");
+        }
+
+        @Test
+        @DisplayName("Should do nothing when no subtitle and subtitle is removed")
+        void epub3_shouldSaveNoSubtitleWhenAlreadyNoSubtitle() throws Exception {
+            String opfContent = """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                        </metadata>
+                    </package>""";
+
+            metadata.setSubtitle(null);
+
+            File epubFile = createEpubWithOpf(opfContent, "test-epub3-subtitle-" + System.nanoTime() + ".epub");
+            writer.saveMetadataToFile(epubFile, metadata, null, new MetadataClearFlags());
+
+            String content = readOpfContent(epubFile);
+            assertThat(content).doesNotContain(">subtitle</opf:meta>");
         }
     }
 

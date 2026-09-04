@@ -160,10 +160,12 @@
               (click)="onBookClick(metadata)"
               (keydown.enter)="onBookClick(metadata)">
               <div class="card-image">
-                <img
-                  [src]="metadata.thumbnailUrl || 'assets/images/missing-cover.jpg'"
-                  [alt]="metadata.title"
-                  loading="lazy"/>
+                <app-cover
+                  class="book-cover"
+                  [src]="metadata.thumbnailUrl"
+                  [title]="metadata.title"
+                  [authors]="metadata.authors ?? []"
+                  [alt]="metadata.title ?? ''"/>
                 <div class="card-overlay">
                   <i class="pi pi-eye"></i>
                   <span>{{ t('selectOverlay') }}</span>
@@ -176,11 +178,24 @@
                   <div
                     class="card-provider"
                     [class]="'card-provider provider-' + getProviderClass(metadata)"
-                    [innerHTML]="buildProviderLink(metadata)"
                     role="button"
                     tabindex="0"
                     (click)="onProviderClick($event)"
-                    (keydown.enter)="onProviderClick($event)">
+                    (keydown.enter)="onProviderClick($event)"
+                  >
+                    @if (getProviderHref(metadata); as providerHref) {
+                      <a [href]="providerHref" target="_blank" rel="noopener">
+                        @if (getProviderName(metadata); as providerName) {
+                          {{ providerName }}
+                        } @else {
+                          {{ t('unknownProvider') }}
+                        }
+                      </a>
+                    } @else if(getProviderName(metadata); as providerName) {
+                      {{ providerName }}
+                    } @else {
+                      {{ t('unknownProvider') }}
+                    }
                   </div>
                 </div>
 

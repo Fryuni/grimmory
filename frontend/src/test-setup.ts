@@ -3,7 +3,7 @@ import {vi} from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import 'vitest-canvas-mock';
 import {TestBed} from '@angular/core/testing';
-import {BrowserDynamicTestingModule, platformBrowserDynamicTesting} from '@angular/platform-browser-dynamic/testing';
+import {BrowserTestingModule, platformBrowserTesting} from '@angular/platform-browser/testing';
 
 declare global {
   var __ANGULAR_TESTBED_INITIALIZED__: boolean | undefined;
@@ -29,7 +29,7 @@ class MockIntersectionObserver {
   }
 }
 
-// Standard mock for matchMedia to support PrimeNG and other UI libraries in JSDOM
+// Standard mock for matchMedia to support Optimus UI and other UI libraries in JSDOM
 const matchMediaMock = (query: string): MediaQueryList => ({
   matches: false,
   media: query,
@@ -116,8 +116,8 @@ if (!window.URL.revokeObjectURL) {
 if (!globalThis.__ANGULAR_TESTBED_INITIALIZED__) {
   globalThis.__ANGULAR_TESTBED_INITIALIZED__ = true;
   TestBed.initTestEnvironment(
-    BrowserDynamicTestingModule,
-    platformBrowserDynamicTesting(),
+    BrowserTestingModule,
+    platformBrowserTesting(),
     {teardown: {destroyAfterEach: true}}
   );
 }

@@ -15,6 +15,7 @@ import org.booklore.model.entity.LibraryPathEntity;
 import org.booklore.model.entity.UserBookFileProgressEntity;
 import org.booklore.model.entity.UserBookProgressEntity;
 import org.booklore.model.enums.AuditAction;
+import org.booklore.repository.BookFileRepository;
 import org.booklore.repository.BookRepository;
 import org.booklore.repository.UserBookProgressRepository;
 import org.booklore.service.audit.AuditService;
@@ -38,6 +39,7 @@ import java.util.Set;
 public class BookFileDetachmentService {
 
     private final BookRepository bookRepository;
+    private final BookFileRepository bookFileRepository;
     private final UserBookProgressRepository userBookProgressRepository;
     private final AuthenticationService authenticationService;
     private final ReadingProgressService readingProgressService;
@@ -96,10 +98,16 @@ public class BookFileDetachmentService {
         newBook.setMetadata(newMetadata);
 
         sourceBook.getBookFiles().remove(targetFile);
-        targetFile.setFileSubPath(newFileSubPath);
-        targetFile.setBook(newBook);
+        newBook.getBookFiles().add(targetFile);
 
         newBook = bookRepository.saveAndFlush(newBook);
+        bookRepository.saveAndFlush(sourceBook);
+
+        // Only save changes to the target file after the shift in relationship
+        // via source & new book or else we get a hibernate error.
+        targetFile.setFileSubPath(newFileSubPath);
+        targetFile.setBook(newBook);
+        bookFileRepository.saveAndFlush(targetFile);
 
         try {
             bookCoverService.regenerateCover(newBook.getId());

@@ -1,10 +1,10 @@
 import {Component, computed, inject, OnInit, signal} from '@angular/core';
 import {FormsModule} from '@angular/forms';
 import {TranslocoDirective, TranslocoService} from '@jsverse/transloco';
-import {MessageService} from 'primeng/api';
-import {Button} from 'primeng/button';
-import {DynamicDialogConfig, DynamicDialogRef} from 'primeng/dynamicdialog';
-import {Select} from 'primeng/select';
+import {MessageService} from '@openng/optimus-ui/api';
+import {Button} from '@openng/optimus-ui/button';
+import {DynamicDialogConfig, DynamicDialogRef} from '@openng/optimus-ui/dynamicdialog';
+import {Select} from '@openng/optimus-ui/select';
 import {finalize} from 'rxjs/operators';
 
 import {Book, BookType} from '../../model/book.model';

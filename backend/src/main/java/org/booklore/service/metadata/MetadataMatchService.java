@@ -8,6 +8,7 @@ import org.booklore.service.appsettings.AppSettingService;
 import org.booklore.service.book.BookQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -18,6 +19,7 @@ public class MetadataMatchService {
     private final AppSettingService appSettingsService;
     private final BookQueryService bookQueryService;
 
+    @Transactional
     public void recalculateAllMatchScores() {
         List<BookEntity> allBooks = bookQueryService.getAllFullBookEntities();
         for (BookEntity book : allBooks) {

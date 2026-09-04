@@ -3,13 +3,12 @@ import {TestBed} from '@angular/core/testing';
 import {ActivatedRoute, convertToParamMap, ParamMap, Router} from '@angular/router';
 import {BehaviorSubject, Subject} from 'rxjs';
 import {afterEach, beforeEach, describe, expect, it, vi, type Mock} from 'vitest';
-import {ConfirmationService, MessageService} from 'primeng/api';
+import {ConfirmationService, MessageService} from '@openng/optimus-ui/api';
 
 import {PageTitleService} from '../../../../shared/service/page-title.service';
 import {BookService} from '../../service/book.service';
 import {BookMetadataManageService} from '../../service/book-metadata-manage.service';
 import {BookConversionService} from '../../service/book-conversion.service';
-import {LibraryShelfMenuService} from '../../service/library-shelf-menu.service';
 import {Book} from '../../model/book.model';
 import {SortDirection, SortOption} from '../../model/sort.model';
 import {UserService} from '../../../settings/user-management/user.service';
@@ -325,14 +324,6 @@ function createHarness(options?: {
         useValue: {
           getMoreActionsMenu: vi.fn(() => []),
           getMetadataMenuItems: vi.fn(() => []),
-        },
-      },
-      {
-        provide: LibraryShelfMenuService,
-        useValue: {
-          initializeLibraryMenuItems: vi.fn(() => []),
-          initializeMagicShelfMenuItems: vi.fn(() => []),
-          initializeShelfMenuItems: vi.fn(() => []),
         },
       },
       {provide: PageTitleService, useValue: {setPageTitle: vi.fn()}},
