@@ -1,6 +1,7 @@
 package org.booklore.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.booklore.config.security.annotation.CheckBookAccess;
 import org.booklore.model.dto.BookFile;
@@ -9,6 +10,7 @@ import org.booklore.model.dto.response.DetachBookFileResponse;
 import org.booklore.model.enums.BookFileType;
 import org.booklore.service.book.BookFileDetachmentService;
 import org.booklore.service.file.AdditionalFileService;
+import org.booklore.service.upload.ChunkedUploadService;
 import org.booklore.service.upload.FileUploadService;
 import lombok.AllArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -29,6 +31,7 @@ public class AdditionalFileController {
     private final AdditionalFileService additionalFileService;
     private final FileUploadService fileUploadService;
     private final BookFileDetachmentService bookFileDetachmentService;
+    private final ChunkedUploadService chunkedUploadService;
 
     @Operation(
             summary = "List additional book files",
@@ -66,12 +69,17 @@ public class AdditionalFileController {
     @PreAuthorize("@securityUtil.canUpload() or @securityUtil.isAdmin()")
     public ResponseEntity<BookFile> uploadAdditionalFile(
             @PathVariable Long bookId,
-            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestPart(value = "uploadId", required = false) String uploadId,
             @RequestParam boolean isBook,
             @RequestParam(required = false) BookFileType bookType,
             @RequestParam(required = false) String description) {
-        BookFile additionalFile = fileUploadService.uploadAdditionalFile(bookId, file, isBook, bookType, description);
-        return ResponseEntity.ok(additionalFile);
+        MultipartFile upload = chunkedUploadService.resolve(file, uploadId);
+        try {
+            return ResponseEntity.ok(fileUploadService.uploadAdditionalFile(bookId, upload, isBook, bookType, description));
+        } finally {
+            chunkedUploadService.release(upload);
+        }
     }
 
     @Operation(

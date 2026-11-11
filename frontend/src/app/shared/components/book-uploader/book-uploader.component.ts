@@ -15,6 +15,7 @@ import {SelectButton} from '@openng/optimus-ui/selectbutton';
 import {DynamicDialogRef} from '@openng/optimus-ui/dynamicdialog';
 import {ProgressBar} from '@openng/optimus-ui/progressbar';
 import {TranslocoDirective, TranslocoService} from '@jsverse/transloco';
+import {CHUNK_SIZE, ChunkedUploadService} from '../../service/chunked-upload.service';
 
 interface UploadingFile {
   file: File;
@@ -56,6 +57,7 @@ export class BookUploaderComponent {
   private readonly messageService = inject(MessageService);
   private readonly appSettingsService = inject(AppSettingsService);
   private readonly http = inject(HttpClient);
+  private readonly chunkedUploadService = inject(ChunkedUploadService);
   private readonly ref = inject(DynamicDialogRef);
   private readonly t = inject(TranslocoService);
   private readonly cdr = inject(ChangeDetectorRef);
@@ -218,7 +220,6 @@ export class BookUploaderComponent {
 
       const formData = new FormData();
       const cleanFile = new File([uploadFile.file], uploadFile.file.name, {type: uploadFile.file.type});
-      formData.append('file', cleanFile, uploadFile.file.name);
 
       let uploadUrl: string;
       if (destination === 'library') {
@@ -231,14 +232,19 @@ export class BookUploaderComponent {
         uploadUrl = `${API_CONFIG.BASE_URL}/api/v1/files/upload/bookdrop`;
       }
 
-      const req = new HttpRequest('POST', uploadUrl, formData, {
-        reportProgress: true
-      });
-
-      this.http.request(req).subscribe({
+      const onChunkProgress = (percent: number) => {
+        uploadFile.progress = percent;
+        this.cdr.detectChanges();
+      };
+      this.chunkedUploadService.upload(
+        cleanFile,
+        formData,
+        body => this.http.request(new HttpRequest('POST', uploadUrl, body, {reportProgress: true})),
+        onChunkProgress
+      ).subscribe({
         next: (event) => {
           if (event.type === HttpEventType.UploadProgress) {
-            if (event.total) {
+            if (event.total && cleanFile.size <= CHUNK_SIZE) {
               uploadFile.progress = Math.round((event.loaded / event.total) * 100);
             }
             this.cdr.detectChanges();
@@ -338,7 +344,7 @@ export class BookUploaderComponent {
   getOverallProgress(): number {
     if (this.files.length === 0) return 0;
     const totalProgress = this.files.reduce((sum, f) => sum + f.progress, 0);
-    return Math.round(totalProgress / this.files.length);
+    return Math.floor(totalProgress / this.files.length);
   }
 
   getUploadedCount(): number {

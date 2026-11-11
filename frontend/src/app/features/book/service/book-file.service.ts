@@ -8,6 +8,7 @@ import {MessageService} from '@openng/optimus-ui/api';
 import {FileDownloadService} from '../../../shared/service/file-download.service';
 import {CacheStorageService} from '../../../shared/service/cache-storage.service';
 import {LocalSettingsService} from '../../../shared/service/local-settings.service';
+import {ChunkedUploadService} from '../../../shared/service/chunked-upload.service';
 import {TranslocoService} from '@jsverse/transloco';
 import {QueryClient} from '@tanstack/angular-query-experimental';
 import {patchBookInCacheWith, patchBooksInCache, removeBooksFromCache} from './book-query-cache';
@@ -25,6 +26,7 @@ export class BookFileService {
   private queryClient = inject(QueryClient);
   private cacheStorageService = inject(CacheStorageService);
   private localSettingsService = inject(LocalSettingsService);
+  private chunkedUploadService = inject(ChunkedUploadService);
   private readonly t = inject(TranslocoService);
 
   getFileContent(bookId: number, bookType?: string): Observable<Blob> {
@@ -108,8 +110,6 @@ export class BookFileService {
 
   uploadAdditionalFile(bookId: number, file: File, fileType: AdditionalFileType): Observable<AdditionalFile> {
     const formData = new FormData();
-    formData.append('file', file);
-
     const isBook = fileType === AdditionalFileType.ALTERNATIVE_FORMAT;
     formData.append('isBook', String(isBook));
 
@@ -131,7 +131,7 @@ export class BookFileService {
         formData.append('bookType', bookType);
       }
     }
-    return this.http.post<AdditionalFile>(`${this.url}/${bookId}/files`, formData).pipe(
+    return this.chunkedUploadService.upload(file, formData, body => this.http.post<AdditionalFile>(`${this.url}/${bookId}/files`, body)).pipe(
       tap(newFile => {
         patchBookInCacheWith(this.queryClient, bookId, book => {
           if (fileType === AdditionalFileType.ALTERNATIVE_FORMAT) {

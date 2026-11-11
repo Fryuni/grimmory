@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.jspecify.annotations.Nullable;
 import org.springframework.web.filter.CommonsRequestLoggingFilter;
 
+import java.util.Locale;
 import java.util.function.Predicate;
 
 public class RequestLoggingFilter extends CommonsRequestLoggingFilter {
@@ -20,5 +21,15 @@ public class RequestLoggingFilter extends CommonsRequestLoggingFilter {
         }
 
         return super.shouldLog(request);
+    }
+
+    @Override
+    protected @Nullable String getMessagePayload(HttpServletRequest request) {
+        // Raw binary bodies (upload chunks, book content) are file bytes, not something to put in logs.
+        String contentType = request.getContentType();
+        if (contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("application/octet-stream")) {
+            return null;
+        }
+        return super.getMessagePayload(request);
     }
 }
