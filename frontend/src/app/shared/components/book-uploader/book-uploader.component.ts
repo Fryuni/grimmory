@@ -344,7 +344,7 @@ export class BookUploaderComponent {
   getOverallProgress(): number {
     if (this.files.length === 0) return 0;
     const totalProgress = this.files.reduce((sum, f) => sum + f.progress, 0);
-    return Math.round(totalProgress / this.files.length);
+    return Math.floor(totalProgress / this.files.length);
   }
 
   getUploadedCount(): number {

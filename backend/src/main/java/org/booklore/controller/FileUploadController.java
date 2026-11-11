@@ -71,7 +71,7 @@ public class FileUploadController {
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
     public ResponseEntity<?> uploadFile(
             @Parameter(description = "File to upload") @RequestParam(value = "file", required = false) MultipartFile file,
-            @Parameter(description = "Completed chunked upload, instead of file") @RequestParam(value = "uploadId", required = false) String uploadId,
+            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestParam(value = "uploadId", required = false) String uploadId,
             @Parameter(description = "Library ID") @RequestParam("libraryId") long libraryId,
             @Parameter(description = "Path ID") @RequestParam("pathId") long pathId) {
         MultipartFile upload = chunkedUploadService.resolve(file, uploadId);
@@ -92,7 +92,7 @@ public class FileUploadController {
     @PostMapping(value = "/upload/bookdrop", consumes = "multipart/form-data")
     public ResponseEntity<Book> uploadFile(
             @Parameter(description = "Book file to upload") @RequestParam(value = "file", required = false) MultipartFile file,
-            @Parameter(description = "Completed chunked upload, instead of file") @RequestParam(value = "uploadId", required = false) String uploadId) throws IOException {
+            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestParam(value = "uploadId", required = false) String uploadId) throws IOException {
         MultipartFile upload = chunkedUploadService.resolve(file, uploadId);
         if (upload.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is missing.");

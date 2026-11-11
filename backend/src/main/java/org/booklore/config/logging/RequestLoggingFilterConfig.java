@@ -32,8 +32,7 @@ public class RequestLoggingFilterConfig {
         filter.setIncludeHeaders(true);
 
         filter.setHeaderPredicate((header) -> !EXCLUDED_HEADERS.contains(header.toLowerCase()));
-        // Chunk bodies are raw book bytes; keep them out of payload logs.
-        filter.setPathPredicate((path) -> !EXCLUDED_PATHS.contains(path) && !path.startsWith("/api/v1/files/upload/chunked/"));
+        filter.setPathPredicate((path) -> !EXCLUDED_PATHS.contains(path));
 
         return filter;
     }

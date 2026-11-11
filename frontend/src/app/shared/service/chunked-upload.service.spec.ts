@@ -1,7 +1,7 @@
-import {HttpClient, provideHttpClient} from '@angular/common/http';
+import {HttpClient, HttpRequest, provideHttpClient} from '@angular/common/http';
 import {HttpTestingController, provideHttpClientTesting} from '@angular/common/http/testing';
 import {TestBed} from '@angular/core/testing';
-import {firstValueFrom, Observable} from 'rxjs';
+import {firstValueFrom, lastValueFrom, Observable} from 'rxjs';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {CHUNK_SIZE, ChunkedUploadService} from './chunked-upload.service';
@@ -58,7 +58,7 @@ describe('ChunkedUploadService', () => {
     const size = CHUNK_SIZE * 2 + 5;
     const slices: [number, number][] = [];
     const progress: number[] = [];
-    const done = firstValueFrom(service.upload(bigFile(size, slices), fields(), send, p => progress.push(p)));
+    const done = lastValueFrom(service.upload(bigFile(size, slices), fields(), send, p => progress.push(p)));
 
     const start = startReq();
     expect(start.request.body).toEqual({fileName: 'big.m4b', fileSize: size});
@@ -87,7 +87,7 @@ describe('ChunkedUploadService', () => {
 
   it('retries transient chunk failures', async () => {
     vi.useFakeTimers();
-    const done = firstValueFrom(service.upload(bigFile(CHUNK_SIZE + 1), fields(), send));
+    const done = lastValueFrom(service.upload(bigFile(CHUNK_SIZE + 1), fields(), send));
     startReq().flush({uploadId: 'abc'});
     await vi.advanceTimersByTimeAsync(0);
 
@@ -134,5 +134,31 @@ describe('ChunkedUploadService', () => {
     expect(chunk.cancelled).toBe(true);
     http.expectOne(req => req.method === 'DELETE' && req.url.endsWith('/chunked/abc')).flush(null);
     http.expectNone(req => req.method === 'PUT');
+  });
+
+  it('discards the staged upload when cancelled after the final request was sent', async () => {
+    const sendEvents = (body: FormData) => client.request(new HttpRequest('POST', finalUrl, body, {reportProgress: true}));
+    const subscription = service.upload(bigFile(CHUNK_SIZE + 1), fields(), sendEvents).subscribe();
+    startReq().flush({uploadId: 'abc'});
+    (await chunkReq()).flush({});
+    (await chunkReq()).flush({});
+    const final = await vi.waitFor(() => http.expectOne(finalUrl));
+    final.event({type: 1, loaded: 1, total: 1});
+
+    subscription.unsubscribe();
+
+    expect(final.cancelled).toBe(true);
+    http.expectOne(req => req.method === 'DELETE' && req.url.endsWith('/chunked/abc')).flush(null);
+  });
+
+  it('keeps the staged upload once the final request was answered', async () => {
+    const sendEvents = (body: FormData) => client.request(new HttpRequest('POST', finalUrl, body, {reportProgress: true}));
+    const done = lastValueFrom(service.upload(bigFile(CHUNK_SIZE + 1), fields(), sendEvents));
+    startReq().flush({uploadId: 'abc'});
+    (await chunkReq()).flush({});
+    (await chunkReq()).flush({});
+    (await vi.waitFor(() => http.expectOne(finalUrl))).flush({});
+    await done;
+    http.expectNone(req => req.method === 'DELETE');
   });
 });

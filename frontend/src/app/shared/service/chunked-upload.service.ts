@@ -1,5 +1,5 @@
 import {inject, Injectable} from '@angular/core';
-import {HttpClient, HttpErrorResponse, HttpEventType, HttpHeaders, HttpParams, HttpRequest} from '@angular/common/http';
+import {HttpClient, HttpErrorResponse, HttpEventType, HttpHeaders, HttpParams, HttpRequest, HttpResponse} from '@angular/common/http';
 import {concat, defer, Observable, range, retry, throwError, timer} from 'rxjs';
 import {concatMap, filter, finalize, ignoreElements, switchMap, tap} from 'rxjs/operators';
 import {API_CONFIG} from '../../core/config/api-config';
@@ -32,14 +32,15 @@ export class ChunkedUploadService {
     }
     return this.http.post<{uploadId: string}>(this.url, {fileName: file.name, fileSize: file.size}).pipe(
       switchMap(({uploadId}) => {
-        // Once the final request emits, the server owns (and cleans up) the staged file unless it then errors.
+        // Once the server answers the final request it owns (and cleans up) the staged file. A caller that
+        // stops after the first plain body value just causes a harmless extra DELETE (404).
         let settled = false;
         return concat(
           range(0, Math.ceil(file.size / CHUNK_SIZE)).pipe(
             concatMap(index => this.sendChunk(uploadId, file, index * CHUNK_SIZE, onProgress)),
             ignoreElements(),
           ),
-          defer(() => send(body('uploadId', uploadId))).pipe(tap({next: () => settled = true})),
+          defer(() => send(body('uploadId', uploadId))).pipe(tap(value => settled ||= value instanceof HttpResponse)),
         ).pipe(
           tap({complete: () => settled = true, error: () => settled = false}),
           finalize(() => {
@@ -68,7 +69,9 @@ export class ChunkedUploadService {
       filter(event => event.type === HttpEventType.Response),
       retry({
         count: 3,
-        delay: (error: HttpErrorResponse) => isRetryable(error.status) ? timer(1000) : throwError(() => error),
+        delay: (error: HttpErrorResponse) => isRetryable(error.status)
+          ? timer((Number(error.headers?.get('Retry-After')) || 1) * 1000)
+          : throwError(() => error),
       }),
     );
   }

@@ -1,6 +1,7 @@
 package org.booklore.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.booklore.config.security.annotation.CheckBookAccess;
 import org.booklore.model.dto.BookFile;
@@ -69,7 +70,7 @@ public class AdditionalFileController {
     public ResponseEntity<BookFile> uploadAdditionalFile(
             @PathVariable Long bookId,
             @RequestParam(value = "file", required = false) MultipartFile file,
-            @RequestParam(value = "uploadId", required = false) String uploadId,
+            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestParam(value = "uploadId", required = false) String uploadId,
             @RequestParam boolean isBook,
             @RequestParam(required = false) BookFileType bookType,
             @RequestParam(required = false) String description) {

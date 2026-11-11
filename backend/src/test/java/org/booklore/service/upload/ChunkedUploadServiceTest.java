@@ -35,11 +35,11 @@ class ChunkedUploadServiceTest {
     ChunkedUploadService service;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws IOException {
         AppSettingService appSettingService = mock(AppSettingService.class);
         when(appSettingService.getAppSettings()).thenReturn(AppSettings.builder().maxFileUploadSizeInMb(1).build());
         service = new ChunkedUploadService(appSettingService, authenticationService);
-        service.storageDir = tempDir.resolve("chunks");
+        service.init(tempDir);
         actAs(1L);
     }
 
@@ -155,7 +155,7 @@ class ChunkedUploadServiceTest {
     }
 
     @Test
-    void abortAfterCompletionDoesNotDeleteClaimedFile() throws IOException {
+    void abortAfterCompletionFailsAndKeepsClaimedFile() throws IOException {
         String id = service.start("a.pdf", 1).uploadId();
         service.appendChunk(id, 0, bytes("x"));
         MultipartFile file = service.resolve(null, id);
@@ -175,19 +175,58 @@ class ChunkedUploadServiceTest {
     }
 
     @Test
-    void sweepDeletesOnlyStaleFiles() throws IOException {
+    void sweepDeletesOnlyUntrackedFiles() throws IOException {
         String idle = service.start("a.pdf", 1).uploadId();
-        service.start("b.pdf", 1);
-        Path stale = Files.createFile(service.storageDir.resolve("orphan.part"));
-        Files.setLastModifiedTime(stale, FileTime.from(Instant.now().minus(Duration.ofHours(2))));
+        String done = service.start("b.pdf", 1).uploadId();
+        service.appendChunk(done, 0, bytes("x"));
+        MultipartFile claimedFile = service.resolve(null, done);
+        Path orphan = Files.createFile(service.storageDir.resolve("orphan.part"));
+        // Old mtimes must not matter for tracked files.
+        try (var files = Files.list(service.storageDir)) {
+            for (Path f : files.toList()) {
+                Files.setLastModifiedTime(f, FileTime.from(Instant.now().minus(Duration.ofHours(2))));
+            }
+        }
 
         service.expireStaleSessions();
 
-        assertThat(Files.exists(stale)).isFalse();
-        try (var files = Files.list(service.storageDir)) {
-            assertThat(files).hasSize(2);
-        }
+        assertThat(Files.exists(orphan)).isFalse();
+        assertThat(claimedFile.getInputStream().readAllBytes()).isEqualTo("x".getBytes());
         service.appendChunk(idle, 0, bytes("x"));
+    }
+
+    @Test
+    void overflowAfterFillingDeclaredSizeLeavesUploadIncomplete() {
+        String id = service.start("a.pdf", 3).uploadId();
+        // First read fills the declared size exactly, the second carries one byte too many.
+        InputStream body = new java.io.SequenceInputStream(bytes("abc"), bytes("d"));
+        assertThatThrownBy(() -> service.appendChunk(id, 0, body)).isInstanceOf(APIException.class);
+        assertThatThrownBy(() -> service.resolve(null, id)).isInstanceOf(APIException.class);
+    }
+
+    @Test
+    void initRemovesOnlyAbandonedRealDirectories() throws IOException {
+        Path parent = Files.createDirectory(tempDir.resolve("parent"));
+        FileTime old = FileTime.from(Instant.now().minus(Duration.ofHours(2)));
+
+        Path abandoned = Files.createDirectory(parent.resolve("grimmory-chunked-uploads-old"));
+        Files.setLastModifiedTime(Files.createFile(abandoned.resolve("upload-1.part")), old);
+        Files.setLastModifiedTime(abandoned, old);
+
+        Path live = Files.createDirectory(parent.resolve("grimmory-chunked-uploads-live"));
+        Files.createFile(live.resolve("upload-2.part"));
+        Files.setLastModifiedTime(live, old);
+
+        Path victim = Files.createDirectory(tempDir.resolve("victim"));
+        Files.setLastModifiedTime(Files.createFile(victim.resolve("keep.txt")), old);
+        Files.createSymbolicLink(parent.resolve("grimmory-chunked-uploads-link"), victim);
+
+        service.init(parent);
+
+        assertThat(abandoned).doesNotExist();
+        assertThat(live.resolve("upload-2.part")).exists();
+        assertThat(victim.resolve("keep.txt")).exists();
+        assertThat(service.storageDir.getParent()).isEqualTo(parent);
     }
 
     @Test
