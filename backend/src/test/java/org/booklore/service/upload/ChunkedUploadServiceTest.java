@@ -229,6 +229,35 @@ class ChunkedUploadServiceTest {
     }
 
     @Test
+    void firstUploadReclaimsOnlyDirsOfDeadOrRestartedProcesses() throws IOException {
+        long self = ProcessHandle.current().pid();
+        long alive = ProcessHandle.current().parent().orElseThrow().pid();
+        Path restarted = Files.createDirectory(tempDir.resolve("grimmory-chunked-uploads-" + self + "-old"));
+        Files.createFile(restarted.resolve("upload-1.part"));
+        Path dead = Files.createDirectory(tempDir.resolve("grimmory-chunked-uploads-999999999999-x"));
+        Path live = Files.createDirectory(tempDir.resolve("grimmory-chunked-uploads-" + alive + "-x"));
+        Path victim = Files.createDirectory(tempDir.resolve("victim"));
+        Files.createFile(victim.resolve("keep.txt"));
+        Path link = tempDir.resolve("grimmory-chunked-uploads-999999999998-link");
+        boolean symlinks = true;
+        try {
+            Files.createSymbolicLink(link, victim);
+        } catch (IOException | UnsupportedOperationException e) {
+            symlinks = false;
+        }
+
+        service.start("a.pdf", 1);
+
+        assertThat(restarted).doesNotExist();
+        assertThat(dead).doesNotExist();
+        assertThat(live).isDirectory();
+        assertThat(victim.resolve("keep.txt")).exists();
+        if (symlinks) {
+            assertThat(Files.isSymbolicLink(link)).isTrue();
+        }
+    }
+
+    @Test
     void passesThroughDirectFile() {
         MultipartFile direct = new MockMultipartFile("file", "a.pdf", null, new byte[]{1});
         assertThat(service.resolve(direct, null)).isSameAs(direct);

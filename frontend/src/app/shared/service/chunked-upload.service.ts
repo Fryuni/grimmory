@@ -10,14 +10,18 @@ export const CHUNK_SIZE = 50 * 1024 * 1024;
 // Resending a chunk is safe (the server rewrites bytes in place), so retry anything that may be transient.
 const isRetryable = (status: number) => status === 0 || status === 408 || status === 429 || status >= 500;
 
-/** Honours Retry-After as delay-seconds or an HTTP date (RFC 9110), defaulting to one second. */
+// Well under the server's one-hour session expiry, whatever a proxy asks for.
+const MAX_RETRY_DELAY_MS = 60_000;
+const IMF_FIXDATE = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+
+/** Honours Retry-After as delay-seconds or an IMF-fixdate (RFC 9110), defaulting to one second, capped at a minute. */
 export function retryDelayMs(error: HttpErrorResponse, now = Date.now()): number {
-  const header = error.headers?.get('Retry-After')?.trim();
-  if (!header) return 1000;
-  if (/^\d+$/.test(header)) return Number(header) * 1000;
-  // Only IMF-fixdate style values ("Tue, 10 Nov 2026 ..."); Date.parse accepts junk like "0.5" as a date.
-  const ms = /^[A-Za-z]{3}, /.test(header) ? Date.parse(header) - now : NaN;
-  return Number.isNaN(ms) ? 1000 : Math.max(0, ms);
+  const header = error.headers?.get('Retry-After')?.trim() ?? '';
+  // Strict formats only: Date.parse accepts junk like "0.5" and reads zone-less dates as local time.
+  const ms = /^\d+$/.test(header) ? Number(header) * 1000
+    : IMF_FIXDATE.test(header) ? Date.parse(header) - now
+    : 1000;
+  return Math.min(MAX_RETRY_DELAY_MS, Math.max(0, Number.isNaN(ms) ? 1000 : ms));
 }
 
 @Injectable({providedIn: 'root'})

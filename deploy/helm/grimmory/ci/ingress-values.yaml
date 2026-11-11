@@ -6,6 +6,8 @@ ingress:
   className: nginx
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Default is 1 MiB; the UI sends large files in 50 MiB chunks.
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
   hosts:
     - host: grimmory.example.com
       paths:

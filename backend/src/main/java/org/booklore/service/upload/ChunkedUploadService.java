@@ -21,8 +21,11 @@ import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.UserPrincipal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashSet;
@@ -57,6 +60,8 @@ public class ChunkedUploadService {
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     /** Assembled files handed to an upload endpoint but not yet released. */
     private final Set<Path> claimed = ConcurrentHashMap.newKeySet();
+    private static final String DIR_PREFIX = "grimmory-chunked-uploads-";
+
     Path tempRoot = Path.of(System.getProperty("java.io.tmpdir"));
     /** Created on first use; private and random per process, so a shared temp dir or a second pod is never trusted or touched. */
     Path storageDir;
@@ -66,7 +71,8 @@ public class ChunkedUploadService {
         final String fileName;
         final long fileSize;
         final Path path;
-        long received;
+        // Volatile so start()'s disk admission sees completed writes without taking the session lock.
+        volatile long received;
         boolean closed;
         volatile Instant lastActivity = Instant.now();
         final ReentrantLock lock = new ReentrantLock();
@@ -85,7 +91,6 @@ public class ChunkedUploadService {
     public record ChunkResponse(long received) {
     }
 
-    // shortcut: a crashed process leaves its staging dir behind (as Tomcat's multipart temp files do); container /tmp is per-container. Add sibling cleanup only if that shows up in practice.
     @PreDestroy
     void shutdown() throws IOException {
         if (storageDir != null) {
@@ -115,7 +120,8 @@ public class ChunkedUploadService {
             String uploadId = UUID.randomUUID().toString();
             try {
                 if (storageDir == null) {
-                    storageDir = Files.createTempDirectory(tempRoot, "grimmory-chunked-uploads-");
+                    storageDir = Files.createTempDirectory(tempRoot, DIR_PREFIX + ProcessHandle.current().pid() + "-");
+                    deleteDeadProcessDirs();
                 }
                 long outstanding = sessions.values().stream().mapToLong(s -> s.fileSize - s.received).sum();
                 if (Files.getFileStore(storageDir).getUsableSpace() < outstanding + fileSize + RESERVED_FREE_BYTES) {
@@ -147,8 +153,10 @@ public class ChunkedUploadService {
         APIException rejection;
         session.lock.lock();
         try {
-            ensureOpen(session);
-            if (offset < 0 || offset > session.received) {
+            if (session.closed) {
+                // Aborted or expired between lookup and lock.
+                rejection = ApiError.GENERIC_NOT_FOUND.createException("Upload not found");
+            } else if (offset < 0 || offset > session.received) {
                 rejection = ApiError.CONFLICT.createException("Expected offset " + session.received);
             } else {
                 rejection = write(session, offset, body);
@@ -289,6 +297,43 @@ public class ChunkedUploadService {
     }
 
     private static final long MAX_DRAIN_BYTES = 128 * MB_TO_BYTES_MULTIPLIER;
+
+    /**
+     * Reclaims staging dirs left by crashed runs (e.g. a container restarted in place keeps its /tmp).
+     * Dir names carry the owning PID; a dir is removed only if that process is gone or is this PID
+     * (containers reuse PID 1), and only if it is a real directory owned by this user, so a live
+     * sibling instance or a planted symlink is never touched.
+     */
+    private void deleteDeadProcessDirs() {
+        long self = ProcessHandle.current().pid();
+        try (Stream<Path> dirs = Files.list(tempRoot)) {
+            UserPrincipal owner = Files.getOwner(storageDir);
+            for (Path dir : (Iterable<Path>) dirs::iterator) {
+                String name = dir.getFileName().toString();
+                if (!name.startsWith(DIR_PREFIX) || dir.equals(storageDir)) {
+                    continue;
+                }
+                String pidPart = name.substring(DIR_PREFIX.length()).split("-", 2)[0];
+                if (!pidPart.matches("\\d{1,18}")) {
+                    continue;
+                }
+                long pid = Long.parseLong(pidPart);
+                boolean ownerGone = pid == self || ProcessHandle.of(pid).map(p -> !p.isAlive()).orElse(true);
+                try {
+                    if (ownerGone
+                            && Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isDirectory()
+                            && owner.equals(Files.getOwner(dir, LinkOption.NOFOLLOW_LINKS))) {
+                        log.info("Removing chunked upload staging left by a previous run: {}", dir);
+                        FileSystemUtils.deleteRecursively(dir);
+                    }
+                } catch (IOException e) {
+                    log.warn("Failed to remove leftover chunked upload staging {}", dir, e);
+                }
+            }
+        } catch (IOException e) {
+            log.warn("Failed to scan {} for leftover chunked uploads", tempRoot, e);
+        }
+    }
 
     /**
      * Consumes an unread body so Tomcat sends the error response instead of resetting the connection.
