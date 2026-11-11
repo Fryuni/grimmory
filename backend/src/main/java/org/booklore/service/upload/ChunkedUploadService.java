@@ -1,9 +1,9 @@
 package org.booklore.service.upload;
 
 import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.booklore.config.AppProperties;
 import org.booklore.config.security.service.AuthenticationService;
 import org.booklore.exception.APIException;
 import org.booklore.exception.ApiError;
@@ -23,10 +23,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.LinkOption;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.UserPrincipal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashSet;
@@ -51,10 +48,12 @@ public class ChunkedUploadService {
     static final int MAX_SESSIONS_PER_USER = 5;
     private static final long MB_TO_BYTES_MULTIPLIER = 1024L * 1024L;
 
+    // Keeps uploads from filling the disk the rest of the app writes to.
+    static final long RESERVED_FREE_BYTES = 512 * MB_TO_BYTES_MULTIPLIER;
+
     private final AppSettingService appSettingService;
     private final AuthenticationService authenticationService;
-
-    private static final String DIR_PREFIX = "grimmory-chunked-uploads-";
+    private final AppProperties appProperties;
 
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     /** Assembled files handed to an upload endpoint but not yet released. */
@@ -84,20 +83,16 @@ public class ChunkedUploadService {
     public record ChunkResponse(long received) {
     }
 
+    /** Stages under the app's own data directory (not a shared temp dir); sessions are in memory, so leftovers are stale. */
     @PostConstruct
-    void init() throws IOException {
-        init(Path.of(System.getProperty("java.io.tmpdir")));
-    }
-
-    /** Stages in a fresh private directory, so a pre-planted path in a shared temp dir is never trusted. */
-    void init(Path parent) throws IOException {
-        storageDir = Files.createTempDirectory(parent, DIR_PREFIX);
-        deleteAbandonedDirs(parent);
-    }
-
-    @PreDestroy
-    void shutdown() {
-        FileSystemUtils.deleteRecursively(storageDir.toFile());
+    void init() {
+        storageDir = Path.of(appProperties.getPathConfig(), "chunked_uploads");
+        try {
+            FileSystemUtils.deleteRecursively(storageDir);
+        } catch (IOException e) {
+            // Don't block startup; the orphan sweep retries.
+            log.warn("Failed to clear chunked upload directory {}", storageDir, e);
+        }
     }
 
     public StartResponse start(String fileName, long fileSize) {
@@ -121,8 +116,9 @@ public class ChunkedUploadService {
             }
             String uploadId = UUID.randomUUID().toString();
             try {
+                Files.createDirectories(storageDir);
                 long outstanding = sessions.values().stream().mapToLong(s -> s.fileSize - s.received).sum();
-                if (Files.getFileStore(storageDir).getUsableSpace() < outstanding + fileSize) {
+                if (Files.getFileStore(storageDir).getUsableSpace() < outstanding + fileSize + RESERVED_FREE_BYTES) {
                     throw ApiError.CONFLICT.createException("Not enough temporary disk space for this upload");
                 }
                 // createTempFile makes the file owner-only on POSIX.
@@ -152,6 +148,8 @@ public class ChunkedUploadService {
                 if (rejection == null) {
                     return new ChunkResponse(session.received);
                 }
+                // More bytes than declared is a protocol violation and may have overwritten accepted data.
+                discard(uploadId, session);
             }
         }
         // Drained outside the lock so a slow rejected body cannot hold up the session or the expiry sweep.
@@ -161,7 +159,6 @@ public class ChunkedUploadService {
 
     /** Returns a rejection when the body overflows the declared size; caller holds the session lock. */
     private APIException write(Session session, long offset, InputStream body) {
-        long receivedBefore = session.received;
         session.lastActivity = Instant.now();
         long position = offset;
         try (FileChannel channel = FileChannel.open(session.path, StandardOpenOption.WRITE)) {
@@ -170,8 +167,6 @@ public class ChunkedUploadService {
             int read;
             while ((read = body.read(buffer)) != -1) {
                 if (position + read > session.fileSize) {
-                    // Don't let a rejected chunk leave the upload looking complete.
-                    session.received = receivedBefore;
                     return ApiError.GENERIC_BAD_REQUEST.createException("Chunk exceeds declared file size");
                 }
                 out.write(buffer, 0, read);
@@ -209,8 +204,11 @@ public class ChunkedUploadService {
                             "Upload incomplete: received " + session.received + " of " + session.fileSize + " bytes");
                 }
                 session.closed = true;
-                claimed.add(session.path);
-                sessions.remove(uploadId);
+                // Atomic with the orphan sweep, which would otherwise see the file in neither set.
+                synchronized (sessions) {
+                    claimed.add(session.path);
+                    sessions.remove(uploadId);
+                }
                 return new AssembledFile(session.fileName, session.fileSize, session.path);
             }
         }
@@ -251,7 +249,10 @@ public class ChunkedUploadService {
 
     /** Retries files whose earlier delete failed; anything in our directory that no session or claim tracks. */
     private void deleteOrphanedFiles() {
-        // Holding the sessions lock keeps start() from creating a file this sweep cannot yet see as tracked.
+        // Holding the sessions lock keeps start() and resolve() from moving a file between "tracked" states mid-scan.
+        if (!Files.isDirectory(storageDir)) {
+            return;
+        }
         synchronized (sessions) {
             Set<Path> tracked = new HashSet<>(claimed);
             sessions.values().forEach(s -> tracked.add(s.path));
@@ -266,45 +267,6 @@ public class ChunkedUploadService {
             } catch (IOException e) {
                 log.warn("Failed to list chunked upload directory {}", storageDir, e);
             }
-        }
-    }
-
-    /**
-     * Removes staging directories left by crashed runs: only real directories (not symlinks) owned by
-     * this user whose contents are all older than the TTL, so another live instance's uploads survive.
-     */
-    private void deleteAbandonedDirs(Path parent) {
-        Instant cutoff = Instant.now().minus(SESSION_TTL);
-        try (Stream<Path> dirs = Files.list(parent)) {
-            UserPrincipal owner = Files.getOwner(storageDir);
-            dirs.filter(dir -> dir.getFileName().toString().startsWith(DIR_PREFIX) && !dir.equals(storageDir))
-                    .forEach(dir -> {
-                        try {
-                            BasicFileAttributes attrs = Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                            if (attrs.isDirectory()
-                                    && owner.equals(Files.getOwner(dir, LinkOption.NOFOLLOW_LINKS))
-                                    && newestModification(dir).isBefore(cutoff)) {
-                                FileSystemUtils.deleteRecursively(dir);
-                            }
-                        } catch (IOException e) {
-                            log.warn("Failed to clean abandoned chunked upload directory {}", dir, e);
-                        }
-                    });
-        } catch (IOException e) {
-            log.warn("Failed to scan {} for abandoned chunked uploads", parent, e);
-        }
-    }
-
-    private static Instant newestModification(Path dir) throws IOException {
-        try (Stream<Path> entries = Files.list(dir)) {
-            Instant newest = Files.getLastModifiedTime(dir, LinkOption.NOFOLLOW_LINKS).toInstant();
-            for (Path entry : (Iterable<Path>) entries::iterator) {
-                Instant modified = Files.getLastModifiedTime(entry, LinkOption.NOFOLLOW_LINKS).toInstant();
-                if (modified.isAfter(newest)) {
-                    newest = modified;
-                }
-            }
-            return newest;
         }
     }
 

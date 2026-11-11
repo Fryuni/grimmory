@@ -70,7 +70,7 @@ public class AdditionalFileController {
     public ResponseEntity<BookFile> uploadAdditionalFile(
             @PathVariable Long bookId,
             @RequestParam(value = "file", required = false) MultipartFile file,
-            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestParam(value = "uploadId", required = false) String uploadId,
+            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestPart(value = "uploadId", required = false) String uploadId,
             @RequestParam boolean isBook,
             @RequestParam(required = false) BookFileType bookType,
             @RequestParam(required = false) String description) {

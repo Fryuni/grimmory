@@ -13,7 +13,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.booklore.exception.ErrorResponse;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -36,6 +40,12 @@ public class FileUploadController {
     private final ChunkedUploadService chunkedUploadService;
 
     public record StartChunkedUploadRequest(String fileName, long fileSize) {
+    }
+
+    // A malformed offset/id is the client's error; without this it falls through to the global 500 handler.
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidParameter(MethodArgumentTypeMismatchException ex) {
+        return ResponseEntity.badRequest().body(new ErrorResponse(400, "Invalid value for parameter '" + ex.getName() + "'"));
     }
 
     @Operation(summary = "Start a chunked upload", description = "Begin uploading a file in several requests, for deployments behind proxies that limit request size. Send the bytes with PUT /upload/chunked/{uploadId}, then pass the uploadId instead of a file to an upload endpoint.")
@@ -71,7 +81,7 @@ public class FileUploadController {
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
     public ResponseEntity<?> uploadFile(
             @Parameter(description = "File to upload") @RequestParam(value = "file", required = false) MultipartFile file,
-            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestParam(value = "uploadId", required = false) String uploadId,
+            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestPart(value = "uploadId", required = false) String uploadId,
             @Parameter(description = "Library ID") @RequestParam("libraryId") long libraryId,
             @Parameter(description = "Path ID") @RequestParam("pathId") long pathId) {
         MultipartFile upload = chunkedUploadService.resolve(file, uploadId);
@@ -92,7 +102,7 @@ public class FileUploadController {
     @PostMapping(value = "/upload/bookdrop", consumes = "multipart/form-data")
     public ResponseEntity<Book> uploadFile(
             @Parameter(description = "Book file to upload") @RequestParam(value = "file", required = false) MultipartFile file,
-            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestParam(value = "uploadId", required = false) String uploadId) throws IOException {
+            @Parameter(description = "ID of a completed chunked upload, sent as a multipart form field instead of file") @RequestPart(value = "uploadId", required = false) String uploadId) throws IOException {
         MultipartFile upload = chunkedUploadService.resolve(file, uploadId);
         if (upload.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is missing.");

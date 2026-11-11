@@ -1,5 +1,6 @@
 package org.booklore.service.upload;
 
+import org.booklore.config.AppProperties;
 import org.booklore.config.security.service.AuthenticationService;
 import org.booklore.exception.APIException;
 import org.booklore.model.dto.BookLoreUser;
@@ -38,8 +39,10 @@ class ChunkedUploadServiceTest {
     void setUp() throws IOException {
         AppSettingService appSettingService = mock(AppSettingService.class);
         when(appSettingService.getAppSettings()).thenReturn(AppSettings.builder().maxFileUploadSizeInMb(1).build());
-        service = new ChunkedUploadService(appSettingService, authenticationService);
-        service.init(tempDir);
+        AppProperties appProperties = new AppProperties();
+        appProperties.setPathConfig(tempDir.toString());
+        service = new ChunkedUploadService(appSettingService, authenticationService, appProperties);
+        service.init();
         actAs(1L);
     }
 
@@ -85,13 +88,13 @@ class ChunkedUploadServiceTest {
         String id = service.start("a.pdf", 4).uploadId();
         InputStream gap = bytes("xyz");
         assertThatThrownBy(() -> service.appendChunk(id, 1, gap)).isInstanceOf(APIException.class);
+        assertThat(service.appendChunk(id, 0, bytes("12")).received()).isEqualTo(2);
+        assertThatThrownBy(() -> service.resolve(null, id)).isInstanceOf(APIException.class);
         InputStream overflow = new ByteArrayInputStream(new byte[200 * 1024]);
         assertThatThrownBy(() -> service.appendChunk(id, 0, overflow)).isInstanceOf(APIException.class);
         // Rejected bodies are drained so the error response reaches the client.
         assertThat(gap).isEmpty();
         assertThat(overflow).isEmpty();
-        assertThat(service.appendChunk(id, 0, bytes("12")).received()).isEqualTo(2);
-        assertThatThrownBy(() -> service.resolve(null, id)).isInstanceOf(APIException.class);
     }
 
     @Test
@@ -164,14 +167,28 @@ class ChunkedUploadServiceTest {
     }
 
     @Test
-    void releaseDeletesUnmovedFileAndStorageIsPrivate() throws IOException {
+    void releaseDeletesUnmovedFileAndStagedFilesArePrivate() throws IOException {
         String id = service.start("a.pdf", 1).uploadId();
+        if (service.storageDir.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            try (var files = Files.list(service.storageDir)) {
+                Path staged = files.findFirst().orElseThrow();
+                assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(staged))).isEqualTo("rw-------");
+            }
+        }
         service.appendChunk(id, 0, bytes("x"));
         service.release(service.resolve(null, id));
         try (var files = Files.list(service.storageDir)) {
             assertThat(files).isEmpty();
         }
-        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(service.storageDir))).isEqualTo("rwx------");
+    }
+
+    @Test
+    void initClearsLeftoversFromPreviousRun() throws IOException {
+        service.start("a.pdf", 1);
+        service.init();
+        assertThat(service.storageDir).doesNotExist();
+        service.start("a.pdf", 1);
+        assertThat(service.storageDir).isDirectory();
     }
 
     @Test
@@ -196,37 +213,14 @@ class ChunkedUploadServiceTest {
     }
 
     @Test
-    void overflowAfterFillingDeclaredSizeLeavesUploadIncomplete() {
+    void overflowDiscardsTheUpload() {
         String id = service.start("a.pdf", 3).uploadId();
         // First read fills the declared size exactly, the second carries one byte too many.
         InputStream body = new java.io.SequenceInputStream(bytes("abc"), bytes("d"));
         assertThatThrownBy(() -> service.appendChunk(id, 0, body)).isInstanceOf(APIException.class);
         assertThatThrownBy(() -> service.resolve(null, id)).isInstanceOf(APIException.class);
-    }
-
-    @Test
-    void initRemovesOnlyAbandonedRealDirectories() throws IOException {
-        Path parent = Files.createDirectory(tempDir.resolve("parent"));
-        FileTime old = FileTime.from(Instant.now().minus(Duration.ofHours(2)));
-
-        Path abandoned = Files.createDirectory(parent.resolve("grimmory-chunked-uploads-old"));
-        Files.setLastModifiedTime(Files.createFile(abandoned.resolve("upload-1.part")), old);
-        Files.setLastModifiedTime(abandoned, old);
-
-        Path live = Files.createDirectory(parent.resolve("grimmory-chunked-uploads-live"));
-        Files.createFile(live.resolve("upload-2.part"));
-        Files.setLastModifiedTime(live, old);
-
-        Path victim = Files.createDirectory(tempDir.resolve("victim"));
-        Files.setLastModifiedTime(Files.createFile(victim.resolve("keep.txt")), old);
-        Files.createSymbolicLink(parent.resolve("grimmory-chunked-uploads-link"), victim);
-
-        service.init(parent);
-
-        assertThat(abandoned).doesNotExist();
-        assertThat(live.resolve("upload-2.part")).exists();
-        assertThat(victim.resolve("keep.txt")).exists();
-        assertThat(service.storageDir.getParent()).isEqualTo(parent);
+        // A replay that overflowed may have overwritten accepted bytes, so the whole upload is gone.
+        assertThatThrownBy(() -> service.appendChunk(id, 0, bytes("abc"))).isInstanceOf(APIException.class);
     }
 
     @Test

@@ -1,10 +1,10 @@
-import {HttpClient, HttpRequest, provideHttpClient} from '@angular/common/http';
+import {HttpClient, HttpErrorResponse, HttpHeaders, HttpRequest, provideHttpClient} from '@angular/common/http';
 import {HttpTestingController, provideHttpClientTesting} from '@angular/common/http/testing';
 import {TestBed} from '@angular/core/testing';
 import {firstValueFrom, lastValueFrom, Observable} from 'rxjs';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
-import {CHUNK_SIZE, ChunkedUploadService} from './chunked-upload.service';
+import {CHUNK_SIZE, ChunkedUploadService, retryDelayMs} from './chunked-upload.service';
 
 // Fake File so tests do not allocate 100 MB.
 function bigFile(size: number, slices: [number, number][] = []): File {
@@ -17,6 +17,21 @@ function bigFile(size: number, slices: [number, number][] = []): File {
     },
   } as unknown as File;
 }
+
+describe('retryDelayMs', () => {
+  const withHeader = (value?: string) =>
+    new HttpErrorResponse({status: 429, headers: value === undefined ? new HttpHeaders() : new HttpHeaders({'Retry-After': value})});
+
+  it('reads delay-seconds, HTTP dates, and falls back to one second', () => {
+    const now = Date.parse('Tue, 10 Nov 2026 12:00:00 GMT');
+    expect(retryDelayMs(withHeader('30'), now)).toBe(30_000);
+    expect(retryDelayMs(withHeader('0'), now)).toBe(0);
+    expect(retryDelayMs(withHeader('Tue, 10 Nov 2026 12:00:30 GMT'), now)).toBe(30_000);
+    expect(retryDelayMs(withHeader('Tue, 10 Nov 2026 11:00:00 GMT'), now)).toBe(0);
+    expect(retryDelayMs(withHeader('soon'), now)).toBe(1000);
+    expect(retryDelayMs(withHeader(), now)).toBe(1000);
+  });
+});
 
 describe('ChunkedUploadService', () => {
   let service: ChunkedUploadService;

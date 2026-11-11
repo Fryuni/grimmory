@@ -10,6 +10,14 @@ export const CHUNK_SIZE = 50 * 1024 * 1024;
 // Resending a chunk is safe (the server rewrites bytes in place), so retry anything that may be transient.
 const isRetryable = (status: number) => status === 0 || status === 408 || status === 429 || status >= 500;
 
+/** Honours Retry-After as delay-seconds or an HTTP date (RFC 9110), defaulting to one second. */
+export function retryDelayMs(error: HttpErrorResponse, now = Date.now()): number {
+  const header = error.headers?.get('Retry-After')?.trim();
+  if (!header) return 1000;
+  const ms = /^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header) - now;
+  return Number.isNaN(ms) ? 1000 : Math.max(0, ms);
+}
+
 @Injectable({providedIn: 'root'})
 export class ChunkedUploadService {
   private readonly http = inject(HttpClient);
@@ -70,7 +78,7 @@ export class ChunkedUploadService {
       retry({
         count: 3,
         delay: (error: HttpErrorResponse) => isRetryable(error.status)
-          ? timer((Number(error.headers?.get('Retry-After')) || 1) * 1000)
+          ? timer(retryDelayMs(error))
           : throwError(() => error),
       }),
     );
