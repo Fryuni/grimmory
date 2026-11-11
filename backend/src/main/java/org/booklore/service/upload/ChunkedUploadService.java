@@ -1,9 +1,8 @@
 package org.booklore.service.upload;
 
-import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.booklore.config.AppProperties;
 import org.booklore.config.security.service.AuthenticationService;
 import org.booklore.exception.APIException;
 import org.booklore.exception.ApiError;
@@ -32,6 +31,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Stream;
 
 /**
@@ -48,16 +48,17 @@ public class ChunkedUploadService {
     static final int MAX_SESSIONS_PER_USER = 5;
     private static final long MB_TO_BYTES_MULTIPLIER = 1024L * 1024L;
 
-    // Keeps uploads from filling the disk the rest of the app writes to.
-    static final long RESERVED_FREE_BYTES = 512 * MB_TO_BYTES_MULTIPLIER;
+    // Leaves room for other temp files, such as single-request uploads staged by Tomcat.
+    static final long RESERVED_FREE_BYTES = 64 * MB_TO_BYTES_MULTIPLIER;
 
     private final AppSettingService appSettingService;
     private final AuthenticationService authenticationService;
-    private final AppProperties appProperties;
 
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     /** Assembled files handed to an upload endpoint but not yet released. */
     private final Set<Path> claimed = ConcurrentHashMap.newKeySet();
+    Path tempRoot = Path.of(System.getProperty("java.io.tmpdir"));
+    /** Created on first use; private and random per process, so a shared temp dir or a second pod is never trusted or touched. */
     Path storageDir;
 
     private static final class Session {
@@ -68,6 +69,7 @@ public class ChunkedUploadService {
         long received;
         boolean closed;
         volatile Instant lastActivity = Instant.now();
+        final ReentrantLock lock = new ReentrantLock();
 
         Session(long userId, String fileName, long fileSize, Path path) {
             this.userId = userId;
@@ -83,15 +85,11 @@ public class ChunkedUploadService {
     public record ChunkResponse(long received) {
     }
 
-    /** Stages under the app's own data directory (not a shared temp dir); sessions are in memory, so leftovers are stale. */
-    @PostConstruct
-    void init() {
-        storageDir = Path.of(appProperties.getPathConfig(), "chunked_uploads");
-        try {
+    // shortcut: a crashed process leaves its staging dir behind (as Tomcat's multipart temp files do); container /tmp is per-container. Add sibling cleanup only if that shows up in practice.
+    @PreDestroy
+    void shutdown() throws IOException {
+        if (storageDir != null) {
             FileSystemUtils.deleteRecursively(storageDir);
-        } catch (IOException e) {
-            // Don't block startup; the orphan sweep retries.
-            log.warn("Failed to clear chunked upload directory {}", storageDir, e);
         }
     }
 
@@ -116,7 +114,9 @@ public class ChunkedUploadService {
             }
             String uploadId = UUID.randomUUID().toString();
             try {
-                Files.createDirectories(storageDir);
+                if (storageDir == null) {
+                    storageDir = Files.createTempDirectory(tempRoot, "grimmory-chunked-uploads-");
+                }
                 long outstanding = sessions.values().stream().mapToLong(s -> s.fileSize - s.received).sum();
                 if (Files.getFileStore(storageDir).getUsableSpace() < outstanding + fileSize + RESERVED_FREE_BYTES) {
                     throw ApiError.CONFLICT.createException("Not enough temporary disk space for this upload");
@@ -137,9 +137,16 @@ public class ChunkedUploadService {
      * duplicates of a chunk are harmless.
      */
     public ChunkResponse appendChunk(String uploadId, long offset, InputStream body) {
-        Session session = ownedSession(uploadId);
+        Session session;
+        try {
+            session = ownedSession(uploadId);
+        } catch (APIException e) {
+            drain(body);
+            throw e;
+        }
         APIException rejection;
-        synchronized (session) {
+        session.lock.lock();
+        try {
             ensureOpen(session);
             if (offset < 0 || offset > session.received) {
                 rejection = ApiError.CONFLICT.createException("Expected offset " + session.received);
@@ -151,6 +158,8 @@ public class ChunkedUploadService {
                 // More bytes than declared is a protocol violation and may have overwritten accepted data.
                 discard(uploadId, session);
             }
+        } finally {
+            session.lock.unlock();
         }
         // Drained outside the lock so a slow rejected body cannot hold up the session or the expiry sweep.
         drain(body);
@@ -184,9 +193,12 @@ public class ChunkedUploadService {
 
     public void abort(String uploadId) {
         Session session = ownedSession(uploadId);
-        synchronized (session) {
+        session.lock.lock();
+        try {
             ensureOpen(session);
             discard(uploadId, session);
+        } finally {
+            session.lock.unlock();
         }
     }
 
@@ -197,7 +209,8 @@ public class ChunkedUploadService {
     public MultipartFile resolve(MultipartFile file, String uploadId) {
         if (StringUtils.hasText(uploadId)) {
             Session session = ownedSession(uploadId);
-            synchronized (session) {
+            session.lock.lock();
+            try {
                 ensureOpen(session);
                 if (session.received != session.fileSize) {
                     throw ApiError.GENERIC_BAD_REQUEST.createException(
@@ -210,6 +223,8 @@ public class ChunkedUploadService {
                     sessions.remove(uploadId);
                 }
                 return new AssembledFile(session.fileName, session.fileSize, session.path);
+            } finally {
+                session.lock.unlock();
             }
         }
         if (file == null) {
@@ -235,12 +250,15 @@ public class ChunkedUploadService {
     public void expireStaleSessions() {
         Instant cutoff = Instant.now().minus(SESSION_TTL);
         sessions.forEach((id, session) -> {
-            if (session.lastActivity.isBefore(cutoff)) {
-                synchronized (session) {
+            // tryLock: a busy session is being written to, so skip it rather than stall the shared scheduler.
+            if (session.lastActivity.isBefore(cutoff) && session.lock.tryLock()) {
+                try {
                     if (!session.closed && session.lastActivity.isBefore(cutoff)) {
                         log.info("Expiring idle chunked upload {}", id);
                         discard(id, session);
                     }
+                } finally {
+                    session.lock.unlock();
                 }
             }
         });
@@ -250,10 +268,10 @@ public class ChunkedUploadService {
     /** Retries files whose earlier delete failed; anything in our directory that no session or claim tracks. */
     private void deleteOrphanedFiles() {
         // Holding the sessions lock keeps start() and resolve() from moving a file between "tracked" states mid-scan.
-        if (!Files.isDirectory(storageDir)) {
-            return;
-        }
         synchronized (sessions) {
+            if (storageDir == null) {
+                return;
+            }
             Set<Path> tracked = new HashSet<>(claimed);
             sessions.values().forEach(s -> tracked.add(s.path));
             try (Stream<Path> files = Files.list(storageDir)) {
@@ -270,10 +288,20 @@ public class ChunkedUploadService {
         }
     }
 
-    /** Consumes an unread body so Tomcat sends the error response instead of resetting the connection. */
-    private static void drain(InputStream body) {
+    private static final long MAX_DRAIN_BYTES = 128 * MB_TO_BYTES_MULTIPLIER;
+
+    /**
+     * Consumes an unread body so Tomcat sends the error response instead of resetting the connection.
+     * Bounded so a client cannot keep the server reading forever; beyond that the connection is reset.
+     */
+    public static void drain(InputStream body) {
         try {
-            body.transferTo(OutputStream.nullOutputStream());
+            byte[] buffer = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while (total < MAX_DRAIN_BYTES && (read = body.read(buffer)) != -1) {
+                total += read;
+            }
         } catch (IOException ignored) {
             // The client went away; nothing left to answer.
         }

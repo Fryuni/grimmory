@@ -29,6 +29,7 @@ describe('retryDelayMs', () => {
     expect(retryDelayMs(withHeader('Tue, 10 Nov 2026 12:00:30 GMT'), now)).toBe(30_000);
     expect(retryDelayMs(withHeader('Tue, 10 Nov 2026 11:00:00 GMT'), now)).toBe(0);
     expect(retryDelayMs(withHeader('soon'), now)).toBe(1000);
+    expect(retryDelayMs(withHeader('0.5'), now)).toBe(1000);
     expect(retryDelayMs(withHeader(), now)).toBe(1000);
   });
 });

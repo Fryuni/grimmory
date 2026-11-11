@@ -1,6 +1,5 @@
 package org.booklore.service.upload;
 
-import org.booklore.config.AppProperties;
 import org.booklore.config.security.service.AuthenticationService;
 import org.booklore.exception.APIException;
 import org.booklore.model.dto.BookLoreUser;
@@ -39,10 +38,8 @@ class ChunkedUploadServiceTest {
     void setUp() throws IOException {
         AppSettingService appSettingService = mock(AppSettingService.class);
         when(appSettingService.getAppSettings()).thenReturn(AppSettings.builder().maxFileUploadSizeInMb(1).build());
-        AppProperties appProperties = new AppProperties();
-        appProperties.setPathConfig(tempDir.toString());
-        service = new ChunkedUploadService(appSettingService, authenticationService, appProperties);
-        service.init();
+        service = new ChunkedUploadService(appSettingService, authenticationService);
+        service.tempRoot = tempDir;
         actAs(1L);
     }
 
@@ -111,6 +108,9 @@ class ChunkedUploadServiceTest {
         assertThatThrownBy(() -> service.appendChunk(id, 0, bytes("x"))).isInstanceOf(APIException.class);
         assertThatThrownBy(() -> service.resolve(null, id)).isInstanceOf(APIException.class);
         assertThatThrownBy(() -> service.abort(id)).isInstanceOf(APIException.class);
+        InputStream body = bytes("unread");
+        assertThatThrownBy(() -> service.appendChunk("unknown", 0, body)).isInstanceOf(APIException.class);
+        assertThat(body).isEmpty();
     }
 
     @Test
@@ -183,12 +183,17 @@ class ChunkedUploadServiceTest {
     }
 
     @Test
-    void initClearsLeftoversFromPreviousRun() throws IOException {
+    void stagesInPrivatePerProcessDirRemovedOnShutdown() throws IOException {
+        Files.createDirectory(tempDir.resolve("grimmory-chunked-uploads-other"));
         service.start("a.pdf", 1);
-        service.init();
+        assertThat(service.storageDir.getParent()).isEqualTo(tempDir);
+        if (service.storageDir.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(service.storageDir))).isEqualTo("rwx------");
+        }
+        service.shutdown();
         assertThat(service.storageDir).doesNotExist();
-        service.start("a.pdf", 1);
-        assertThat(service.storageDir).isDirectory();
+        // Another process's directory is never touched.
+        assertThat(tempDir.resolve("grimmory-chunked-uploads-other")).isDirectory();
     }
 
     @Test

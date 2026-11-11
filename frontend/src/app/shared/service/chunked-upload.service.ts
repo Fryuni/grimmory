@@ -14,7 +14,9 @@ const isRetryable = (status: number) => status === 0 || status === 408 || status
 export function retryDelayMs(error: HttpErrorResponse, now = Date.now()): number {
   const header = error.headers?.get('Retry-After')?.trim();
   if (!header) return 1000;
-  const ms = /^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header) - now;
+  if (/^\d+$/.test(header)) return Number(header) * 1000;
+  // Only IMF-fixdate style values ("Tue, 10 Nov 2026 ..."); Date.parse accepts junk like "0.5" as a date.
+  const ms = /^[A-Za-z]{3}, /.test(header) ? Date.parse(header) - now : NaN;
   return Number.isNaN(ms) ? 1000 : Math.max(0, ms);
 }
 

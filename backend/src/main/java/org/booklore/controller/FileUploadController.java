@@ -44,7 +44,9 @@ public class FileUploadController {
 
     // A malformed offset/id is the client's error; without this it falls through to the global 500 handler.
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    public ResponseEntity<ErrorResponse> handleInvalidParameter(MethodArgumentTypeMismatchException ex) {
+    public ResponseEntity<ErrorResponse> handleInvalidParameter(MethodArgumentTypeMismatchException ex, HttpServletRequest request) throws IOException {
+        // A rejected chunk PUT still has its body unread; drain it so the 400 reaches the client.
+        ChunkedUploadService.drain(request.getInputStream());
         return ResponseEntity.badRequest().body(new ErrorResponse(400, "Invalid value for parameter '" + ex.getName() + "'"));
     }
 
