@@ -21,6 +21,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.io.IOException;
 
@@ -45,6 +47,8 @@ public class FileUploadController {
 
     @Operation(summary = "Upload a chunk", description = "Write the raw request body at the given byte offset. Chunks must be sent in order; resending from an earlier offset overwrites from there.")
     @PreAuthorize("@securityUtil.isAdmin() or @securityUtil.canUpload()")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, description = "Raw chunk bytes",
+            content = @Content(mediaType = "application/octet-stream", schema = @Schema(type = "string", format = "binary")))
     @PutMapping(value = "/upload/chunked/{uploadId}", consumes = "application/octet-stream")
     public ChunkedUploadService.ChunkResponse uploadChunk(
             @PathVariable String uploadId,

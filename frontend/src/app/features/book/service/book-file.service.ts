@@ -1,7 +1,7 @@
 import {inject, Injectable} from '@angular/core';
 import {Observable, throwError, from} from 'rxjs';
 import {HttpClient} from '@angular/common/http';
-import {catchError, switchMap, tap} from 'rxjs/operators';
+import {catchError, tap} from 'rxjs/operators';
 import {AdditionalFile, AdditionalFileType, Book, DetachBookFileResponse, DuplicateDetectionRequest, DuplicateGroup} from '../model/book.model';
 import {API_CONFIG} from '../../../core/config/api-config';
 import {MessageService} from '@openng/optimus-ui/api';
@@ -131,8 +131,7 @@ export class BookFileService {
         formData.append('bookType', bookType);
       }
     }
-    return this.chunkedUploadService.attachFile(formData, file).pipe(
-      switchMap(() => this.http.post<AdditionalFile>(`${this.url}/${bookId}/files`, formData)),
+    return this.chunkedUploadService.upload(file, formData, body => this.http.post<AdditionalFile>(`${this.url}/${bookId}/files`, body)).pipe(
       tap(newFile => {
         patchBookInCacheWith(this.queryClient, bookId, book => {
           if (fileType === AdditionalFileType.ALTERNATIVE_FORMAT) {

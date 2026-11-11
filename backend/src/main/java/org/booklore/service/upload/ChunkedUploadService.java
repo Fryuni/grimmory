@@ -8,7 +8,6 @@ import org.booklore.exception.ApiError;
 import org.booklore.service.appsettings.AppSettingService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.util.FileSystemUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -22,12 +21,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 /**
  * Assembles a file from several sequential requests so large uploads fit under per-request
@@ -74,8 +75,8 @@ public class ChunkedUploadService {
 
     @PostConstruct
     void clearLeftovers() {
-        // Sessions live in memory only, so anything on disk is from a previous run.
-        FileSystemUtils.deleteRecursively(storageDir.toFile());
+        // Sessions live in memory only, so stale files are from a previous run or a failed delete.
+        deleteStaleFiles(Instant.now().minus(SESSION_TTL));
     }
 
     public StartResponse start(String fileName, long fileSize) {
@@ -99,8 +100,9 @@ public class ChunkedUploadService {
             }
             String uploadId = UUID.randomUUID().toString();
             try {
-                Files.createDirectories(storageDir);
-                Path path = Files.createFile(storageDir.resolve(uploadId));
+                createPrivateStorageDir();
+                // createTempFile makes the file owner-only on POSIX.
+                Path path = Files.createTempFile(storageDir, "upload-", ".part");
                 sessions.put(uploadId, new Session(userId, baseName, fileSize, path));
             } catch (IOException e) {
                 throw ApiError.FILE_READ_ERROR.createException(e.getMessage());
@@ -111,36 +113,37 @@ public class ChunkedUploadService {
 
     /**
      * Writes the request body at {@code offset}. An offset below the bytes already received
-     * overwrites from there, so a client can safely retry a chunk whose request failed midway.
+     * rewrites those bytes in place without discarding later ones, so retries and late
+     * duplicates of a chunk are harmless.
      */
     public ChunkResponse appendChunk(String uploadId, long offset, InputStream body) {
         Session session = ownedSession(uploadId);
         synchronized (session) {
             ensureOpen(session);
             if (offset < 0 || offset > session.received) {
+                drain(body);
                 throw ApiError.CONFLICT.createException("Expected offset " + session.received);
             }
+            session.lastActivity = Instant.now();
             long position = offset;
             try (FileChannel channel = FileChannel.open(session.path, StandardOpenOption.WRITE)) {
-                channel.truncate(offset);
                 OutputStream out = Channels.newOutputStream(channel.position(offset));
                 byte[] buffer = new byte[64 * 1024];
                 int read;
                 while ((read = body.read(buffer)) != -1) {
                     if (position + read > session.fileSize) {
-                        channel.truncate(offset);
-                        position = offset;
+                        drain(body);
                         throw ApiError.GENERIC_BAD_REQUEST.createException("Chunk exceeds declared file size");
                     }
                     out.write(buffer, 0, read);
                     position += read;
+                    session.received = Math.max(session.received, position);
+                    // Keeps a slow but active upload from looking idle to the expiry sweep.
+                    session.lastActivity = Instant.now();
                 }
             } catch (IOException e) {
                 log.warn("Chunk write failed for upload {}: {}", uploadId, e.getMessage());
                 throw ApiError.FILE_READ_ERROR.createException(e.getMessage());
-            } finally {
-                session.received = position;
-                session.lastActivity = Instant.now();
             }
             return new ChunkResponse(session.received);
         }
@@ -149,6 +152,7 @@ public class ChunkedUploadService {
     public void abort(String uploadId) {
         Session session = ownedSession(uploadId);
         synchronized (session) {
+            ensureOpen(session);
             discard(uploadId, session);
         }
     }
@@ -200,6 +204,43 @@ public class ChunkedUploadService {
                 }
             }
         });
+        deleteStaleFiles(cutoff);
+    }
+
+    /** Also retries files whose earlier delete failed; active uploads are rewritten more recently than the cutoff. */
+    private void deleteStaleFiles(Instant cutoff) {
+        if (!Files.isDirectory(storageDir)) {
+            return;
+        }
+        try (Stream<Path> files = Files.list(storageDir)) {
+            files.forEach(file -> {
+                try {
+                    if (Files.getLastModifiedTime(file).toInstant().isBefore(cutoff)) {
+                        Files.deleteIfExists(file);
+                    }
+                } catch (IOException e) {
+                    log.warn("Failed to delete stale chunked upload {}", file, e);
+                }
+            });
+        } catch (IOException e) {
+            log.warn("Failed to list chunked upload directory {}", storageDir, e);
+        }
+    }
+
+    private void createPrivateStorageDir() throws IOException {
+        Files.createDirectories(storageDir);
+        if (storageDir.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            Files.setPosixFilePermissions(storageDir, PosixFilePermissions.fromString("rwx------"));
+        }
+    }
+
+    /** Consumes an unread body so Tomcat sends the error response instead of resetting the connection. */
+    private static void drain(InputStream body) {
+        try {
+            body.transferTo(OutputStream.nullOutputStream());
+        } catch (IOException ignored) {
+            // The client went away; nothing left to answer.
+        }
     }
 
     private void discard(String uploadId, Session session) {

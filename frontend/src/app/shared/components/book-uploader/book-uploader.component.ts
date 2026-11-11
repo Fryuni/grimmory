@@ -15,7 +15,6 @@ import {SelectButton} from '@openng/optimus-ui/selectbutton';
 import {DynamicDialogRef} from '@openng/optimus-ui/dynamicdialog';
 import {ProgressBar} from '@openng/optimus-ui/progressbar';
 import {TranslocoDirective, TranslocoService} from '@jsverse/transloco';
-import {switchMap} from 'rxjs';
 import {CHUNK_SIZE, ChunkedUploadService} from '../../service/chunked-upload.service';
 
 interface UploadingFile {
@@ -237,8 +236,11 @@ export class BookUploaderComponent {
         uploadFile.progress = percent;
         this.cdr.detectChanges();
       };
-      this.chunkedUploadService.attachFile(formData, cleanFile, onChunkProgress).pipe(
-        switchMap(() => this.http.request(new HttpRequest('POST', uploadUrl, formData, {reportProgress: true})))
+      this.chunkedUploadService.upload(
+        cleanFile,
+        formData,
+        body => this.http.request(new HttpRequest('POST', uploadUrl, body, {reportProgress: true})),
+        onChunkProgress
       ).subscribe({
         next: (event) => {
           if (event.type === HttpEventType.UploadProgress) {
